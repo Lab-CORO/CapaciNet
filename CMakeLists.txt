@@ -16,6 +16,7 @@ find_package(pcl_ros REQUIRED)
 find_package (Eigen3 REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(data_generation REQUIRED)
+find_package(visualization_msgs REQUIRED)
 
 # find_package( REQUIRED)
 
@@ -83,11 +84,28 @@ target_include_directories(generate_data PUBLIC ${OCTOMAP_INCLUDE_DIRS})
 target_link_libraries(generate_data ${OCTOMAP_LIBRARIES})
 ament_target_dependencies(generate_data rclcpp geometry_msgs data_generation tf2_geometry_msgs pcl_ros Eigen3)
 
+add_executable(reachability_map_viz
+        src/reachability_map_viz.cpp
+        include/progressbar.hpp
+        src/master_ik_data.cpp
+        include/master_ik_data.h
+        include/json.hpp
+        include/robot.h
+        src/robot.cpp
+        include/utils.h
+        src/utils.cpp
+
+)
+target_include_directories(reachability_map_viz PUBLIC ${OCTOMAP_INCLUDE_DIRS})
+target_link_libraries(reachability_map_viz ${OCTOMAP_LIBRARIES})
+ament_target_dependencies(reachability_map_viz rclcpp geometry_msgs visualization_msgs data_generation tf2_geometry_msgs pcl_ros Eigen3)
 
 
 install(TARGETS
-   create_reachability_map
-   DESTINATION lib/${PROJECT_NAME}
+    create_reachability_map
+    reachability_map_viz
+    generate_data
+    DESTINATION lib/${PROJECT_NAME}
 
  )
 
