@@ -10,7 +10,13 @@
 
 double utils::round_to_decimals(double value, int decimals) {
     double factor = std::pow(10, decimals);
-    return round(value * factor) / factor;
+    double res = round(value * factor) / factor;
+    if (res >1000) {
+        std::cout << "res: " << res << std::endl;
+        std::cout << "factor: " << factor << std::endl;
+        std::cout << "value: " << value << std::endl;
+    }
+    return res;
 }
 
 

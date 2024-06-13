@@ -17,6 +17,8 @@ using json = nlohmann::json;
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <std_msgs/msg/bool.hpp>
 
+#include "../include/utils.h"
+
 
 
 struct joint {
@@ -63,7 +65,10 @@ struct joint {
         double theta_z;
         double theta_w;
 
+        std::string key;
+
         std::vector<joint> joints;
+
 
         void to_json(json &j);
 
@@ -101,6 +106,9 @@ struct joint {
         double y;
         double z;
         std::vector<PoseOnSphere> poses;
+        // dictionaire of poses
+        std::map<std::string, PoseOnSphere> dict_poses;
+        std::string key;
 
         void to_json(json &j);
 
@@ -132,9 +140,9 @@ struct joint {
         double resolution;
         double radius;
         int sphere_sample;
-        std::vector<Sphere> spheres;
+        // std::vector<Sphere> spheres;
         json json_data;
-        std::map<Sphere,std::map<PoseOnSphere, std::vector<joint>>> dict_data;
+        std::map<std::string, Sphere> dict_sphere;
         // node
         // rclcpp::Node node;
 
@@ -143,10 +151,11 @@ struct joint {
         ~MasterIkData();
 
         void write_data(std::string filename);
-
         void load_data(std::string filename);
 
         void add(Sphere &s);
+        // get the sphere object with the same x,y,z
+        bool update_sphere(double x, double y, double z, PoseOnSphere &new_pose);
     };
 
 

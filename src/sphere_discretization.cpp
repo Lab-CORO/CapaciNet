@@ -92,7 +92,7 @@ namespace sphere_discretization
     }
 
 
-    void SphereDiscretization::make_sphere_poses(const octomap::point3d& origin, double r, std::vector< geometry_msgs::msg::Pose >& pose_Col)
+    void SphereDiscretization::make_sphere_poses(const Sphere &origin, double r, std::vector< geometry_msgs::msg::Pose >& pose_Col)
     {
         const double DELTA = M_PI / 5.;
         const unsigned MAX_INDEX = (2 * 5 * 5);
@@ -132,9 +132,9 @@ namespace sphere_discretization
         for (int index = 0; index < MAX_INDEX; index++)
         {
             // round x,y,z values to 3 decimal places
-            pose.position.x = utils::round_to_decimals(r * position_vector[index].x + origin.x(), 4);
-            pose.position.y = utils::round_to_decimals(r * position_vector[index].y + origin.y(), 4);
-            pose.position.z = utils::round_to_decimals(r * position_vector[index].z + origin.z(), 4);
+            pose.position.x = utils::round_to_decimals(r * position_vector[index].x + origin.x, 4);
+            pose.position.y = utils::round_to_decimals(r * position_vector[index].y + origin.y, 4);
+            pose.position.z = utils::round_to_decimals(r * position_vector[index].z + origin.z, 4);
             const tf2::Quaternion& quat = quaternion[index];
             pose.orientation.x = quat.x();
             pose.orientation.y = quat.y();

@@ -58,7 +58,7 @@ int main(int argc, char **argv) {
     bool debug = false;
     rclcpp::Time startit = node->get_clock()->now();
     // rclcpp::Time startit = rclcpp::Time::now();
-    float resolution = 0.08; //previous 0.08
+    float resolution = 0.2; //previous 0.08
     // static rclcpp::Publisher marker_pub = node->create_publisher<visualization_msgs::Marker>("/visualization_marker", 10, true);
     // static rclcpp::Publisher cube_pub = node->create_publisher<visualization_msgs::Marker>("/visualization_marker_cube", 10, true);
     rclcpp::Rate loop_rate(10);
@@ -130,12 +130,12 @@ int main(int argc, char **argv) {
         sd.convertPointToVector(new_data[i], sphere_coord[i]);
         // create a sphere in the master_ik_data
         Sphere sphere;
-        sphere.x = sphere_coord[i][0];
-        sphere.y = sphere_coord[i][1];
-        sphere.z = sphere_coord[i][2];
+        sphere.x = utils::round_to_decimals(sphere_coord[i][0], 4);
+        sphere.y = utils::round_to_decimals(sphere_coord[i][1], 4);
+        sphere.z = utils::round_to_decimals(sphere_coord[i][2], 4);
 
         // create poses of spheres exit 50 poses around a sphere pose with a raduis
-        sd.make_sphere_poses(new_data[i], radius, poses);
+        sd.make_sphere_poses(sphere, radius, poses);
         // number of point accepted for curobo
 
         // send all the 50 poses to curobo
@@ -149,17 +149,17 @@ int main(int argc, char **argv) {
             if (joint_states_valid[j].data) {
                 // save the pose in vector
 
-                poses_vector2save.push_back(poses[i]);
+                poses_vector2save.push_back(poses[j]);
 
                 // create a pose in the sphere
                 PoseOnSphere p;
-                p.x = poses[i].position.x;
-                p.y = poses[i].position.y;
-                p.z = poses[i].position.z;
-                p.theta_x = poses[i].orientation.x;
-                p.theta_y = poses[i].orientation.y;
-                p.theta_z = poses[i].orientation.z;
-                p.theta_w = poses[i].orientation.w;
+                p.x = sphere.x;
+                p.y = sphere.y;
+                p.z = sphere.z;
+                p.theta_x = utils::round_to_decimals(poses[j].orientation.x, 6);
+                p.theta_y = utils::round_to_decimals(poses[j].orientation.y, 6);
+                p.theta_z = utils::round_to_decimals(poses[j].orientation.z, 6);
+                p.theta_w = utils::round_to_decimals(poses[j].orientation.w, 6);
                 // if joint[i] is not empty add the joints to the pose
 
                 // create a joint

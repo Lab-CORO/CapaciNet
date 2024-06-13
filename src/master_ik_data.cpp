@@ -24,11 +24,19 @@ void MasterIkData::write_data(std::string filename)
     j["resolution"] = resolution;
     j["radius"] = radius;
     j["sphere_sample"] = sphere_sample;
-    // add spheres in the json
-    for (int i = 0; i < this->spheres.size(); i++) {
-        spheres[i].to_json(j["spheres"][i]);
+    // add spheres in the json from the dict_sphere map
+    std::map<std::string, Sphere>::iterator it;
+    // print dict_spher for debug
+    // std::cout << "dict_sphere size: " << dict_sphere.size() << std::endl;
+
+    for (auto& [key, sphere] : dict_sphere) {
+        json sphere_json;
+        sphere.to_json(sphere_json);
+        j[key].push_back(sphere_json);
     }
 
+    // print the json for debug
+    // std::cout << j.dump(4) << std::endl;
     this->json_data = j;
     std::ofstream o(filename);
     o << j.dump(4) << std::endl;
@@ -78,68 +86,50 @@ void MasterIkData::load_data(std::string filename) {
             s.add(p); // Vérifiez que cela ajoute les poses correctement à Sphere
         }
 
-        this->spheres.push_back(s);
+        this->dict_sphere[s.key] = s;
     }
     RCLCPP_INFO(this->get_logger(),"Data loaded");
 }
 
 
 
-/**
-void MasterIkData::load_data(json &j, std::string filename) {
-    std::ifstream i(filename); //"./master_ik_data.json"
-    j = json::parse(i);
-    resolution = j["resolution"];
-    radius = j["radius"];
-    sphere_sample = j["sphere_sample"];
-//    load the json data in the data_dict map
-    Sphere s;
-    for (int i = 0; i < j["spheres"].size(); i++) {
 
-        s.x = j["spheres"][i]["x"];
-        s.y = j["spheres"][i]["y"];
-        s.z = j["spheres"][i]["z"];
-        PoseOnSphere p;
-        for (int k = 0; k < j["spheres"][i]["poses"].size(); k++) {
-            std::map<PoseOnSphere, std::vector<joint>> pose;
-//            PoseOnSphere p;
-            p.x = j["spheres"][i]["poses"][k]["x"];
-            p.y = j["spheres"][i]["poses"][k]["y"];
-            p.z = j["spheres"][i]["poses"][k]["z"];
-            p.theta_x = j["spheres"][i]["poses"][k]["theta_x"];
-            p.theta_y = j["spheres"][i]["poses"][k]["theta_y"];
-            p.theta_z = j["spheres"][i]["poses"][k]["theta_z"];
-            p.theta_w = j["spheres"][i]["poses"][k]["theta_w"];
-            std::vector<joint> joints = {};
-            for (int l = 0; l < j["spheres"][i]["poses"][k]["joints"].size(); l++) {
-                joint jo;
-                jo.j1 = j["spheres"][i]["poses"][k]["joints"][l]["j1"];
-                jo.j2 = j["spheres"][i]["poses"][k]["joints"][l]["j2"];
-                jo.j3 = j["spheres"][i]["poses"][k]["joints"][l]["j3"];
-                jo.j4 = j["spheres"][i]["poses"][k]["joints"][l]["j4"];
-                jo.j5 = j["spheres"][i]["poses"][k]["joints"][l]["j5"];
-                jo.j6 = j["spheres"][i]["poses"][k]["joints"][l]["j6"];
-                joints.push_back(jo);
-
-            }
-            p.add(joints);
-            pose[p] = joints;
-            this->dict_data[s] = pose;
-            s.add(p);
-        }
-
-        this->spheres.push_back(s);
-    }
-
-    RCLCPP_INFO(node->get_logger(),"Data loaded");
-
-
-
-    // load spheres from the json
-}**/
 
 void MasterIkData::add(Sphere &s) {
-    this->spheres.push_back(s);
+    // this->spheres.push_back(s);
+    std::string sphere_key = "sphere: " + std::to_string(s.x) + "," + std::to_string(s.y) + "," + std::to_string(s.z);
+    s.key = sphere_key;
+    this->dict_sphere[sphere_key] = {s};
+}
+
+bool MasterIkData::update_sphere(double x, double y, double z, PoseOnSphere &new_pose) {
+    // this methode get the sphere with the x,y,z
+    std::string sphere_key = "sphere: " + std::to_string(utils::round_to_decimals(x, 3)) + ","+
+                                std::to_string(utils::round_to_decimals(y, 3)) + "," +
+                                std::to_string(utils::round_to_decimals(z, 3));
+    new_pose.key = "poseOnSphere:" +
+                    std::to_string(x) + "," +
+                    std::to_string(y) + "," +
+                    std::to_string(z) + "," +
+                    std::to_string(new_pose.theta_x) + "," +
+                    std::to_string(new_pose.theta_y) + "," +
+                    std::to_string(new_pose.theta_z) + "," +
+                    std::to_string(new_pose.theta_w);
+    if (this->dict_sphere.find(sphere_key) == this->dict_sphere.end()) {
+        // create the sphere
+        Sphere s;
+        s.x = utils::round_to_decimals(x, 3);
+        s.y = utils::round_to_decimals(y, 3);
+        s.z = utils::round_to_decimals(z, 3);
+        s.key = sphere_key;
+        s.dict_poses.insert(make_pair(new_pose.key, new_pose));
+        this->dict_sphere.insert(make_pair(sphere_key, s));
+    }else {
+        this->dict_sphere[sphere_key].dict_poses.insert(make_pair(new_pose.key, new_pose));
+    }
+
+    return true;
+
 }
 
 void PoseOnSphere::to_json(json &j) {
@@ -152,13 +142,15 @@ void PoseOnSphere::to_json(json &j) {
     j["theta_z"] = this->theta_z;
     j["theta_w"] = this->theta_w;
     // add all joints in the json
-    for (int i = 0; i < this->joints.size(); i++) {
-        j["joints"][i]["j1"] = this->joints[i].j1;
-        j["joints"][i]["j2"] = this->joints[i].j2;
-        j["joints"][i]["j3"] = this->joints[i].j3;
-        j["joints"][i]["j4"] = this->joints[i].j4;
-        j["joints"][i]["j5"] = this->joints[i].j5;
-        j["joints"][i]["j6"] = this->joints[i].j6;
+    for (const auto& joint : this->joints) {
+        json joint_json;
+        joint_json["j1"] = joint.j1;
+        joint_json["j2"] = joint.j2;
+        joint_json["j3"] = joint.j3;
+        joint_json["j4"] = joint.j4;
+        joint_json["j5"] = joint.j5;
+        joint_json["j6"] = joint.j6;
+        j["joints"].push_back(joint_json);
     }
 
 
@@ -182,88 +174,27 @@ void Sphere::to_json(json &j) {
     j["x"] = this->x;
     j["y"] = this->y;
     j["z"] = this->z;
-    // add all poses in the json
-    for (int i = 0; i < this->poses.size(); i++) {
-        this->poses[i].to_json(j["poses"][i]);
+    // add all poses in the json from the map
+    std::map<std::string, PoseOnSphere>::iterator it;
+    for (auto& [key, pose] : dict_poses) {
+        json pose_json;
+        pose.to_json(pose_json);
+        j[key].push_back(pose_json);
     }
 }
 
 bool Sphere::has_points() {
-    return !this->poses.empty();
+    return !this->dict_poses.empty();
 }
 
 void Sphere::add(PoseOnSphere &p) {
-    this->poses.push_back(p);
-
+    std::string poses_key = "poseOnSphere:" + std::to_string(this->x) +
+                            "," + std::to_string(this->y) +
+                            "," + std::to_string(this->z) +
+                            "," + std::to_string(p.theta_x) +
+                            "," + std::to_string(p.theta_y) +
+                            "," + std::to_string(p.theta_z) +
+                            "," + std::to_string(p.theta_w);
+    p.key = poses_key;
+    this->dict_poses[poses_key] = {p};
 }
-/**
-//main
-int main() {
-    MasterIkData data;
-//    create 3 sphere with 3 poses each and 3 joints each
-    for (int i = 0; i < 3; i++) {
-        Sphere s;
-        s.x = i;
-        s.y = i;
-        s.z = i;
-        for (int j = 0; j < 3; j++) {
-            PoseOnSphere p;
-            p.x = j;
-            p.y = j;
-            p.z = j;
-            p.theta_x = j;
-            p.theta_y = j;
-            p.theta_z = j;
-            p.theta_w = j;
-            for (int k = 0; k < 3; k++) {
-                joint j;
-                j.j1 = k;
-                j.j2 = k;
-                j.j3 = k;
-                j.j4 = k;
-                j.j5 = k;
-                j.j6 = k;
-                p.joints.push_back(j);
-            }
-            s.add(p);
-        }
-        data.add(s);
-    }
-    data.write_data("/home/will/master_ik_data.json");
-    data.load_data(data.json_data);
-//    print the data sphere 2 pose 1 joint 2
-    std::cout << data.spheres[2].poses[1].joints[0].j1 << std::endl;
-
-
-    return 0;
-}**/
-
-//   joint joint::array2joint(std::vector<double> array) {
-//    /*
-//     * This function is used to convert an float64[] to a joint object
-//     */
-//    for(int i = 0; i < 6; i++) {
-//        this->j1 = array[0];
-//        this->j2 = array[1];
-//        this->j3 = array[2];
-//        this->j4 = array[3];
-//        this->j5 = array[4];
-//        this->j6 = array[5];
-//    }
-//    return *this;
-//}
-
-
-//std::vector<double> joint::joint2array() {
-//    /*
-//     * This function is used to convert a joint object to a float64[]
-//     */
-//    std::vector<double> array;
-//    array.push_back(this->j1);
-//    array.push_back(this->j2);
-//    array.push_back(this->j3);
-//    array.push_back(this->j4);
-//    array.push_back(this->j5);
-//    array.push_back(this->j6);
-//    return array;
-//}

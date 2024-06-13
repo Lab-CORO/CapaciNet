@@ -19,51 +19,76 @@ std::vector<visualization_msgs::msg::Marker> generate_markers(const std::string&
     std::vector<visualization_msgs::msg::Marker> markers;
     int id = 0;
 
-    for (const auto& sphere : j["spheres"]) {
-        geometry_msgs::msg::Point sphere_position;
-        sphere_position.x = sphere["x"];
-        sphere_position.y = sphere["y"];
-        sphere_position.z = sphere["z"];
+    // for (const auto& sphere : j["spheres"]) {
+    //     geometry_msgs::msg::Point sphere_position;
+    //     sphere_position.x = sphere["x"];
+    //     sphere_position.y = sphere["y"];
+    //     sphere_position.z = sphere["z"];
+    //
+    //     int joint_count = 0;
+    //     for (const auto& pose : sphere["poses"]) {
+    //         if (pose.contains("joints") && !pose["joints"].empty()) {
+    //             joint_count++;
+    //         }
+    //     }
 
-        int joint_count = 0;
-        for (const auto& pose : sphere["poses"]) {
-            if (pose.contains("joints") && !pose["joints"].empty()) {
-                joint_count++;
+    for (const auto& [sphere_key, sphere_value] : j.items()) {
+        if (sphere_key != "radius" && sphere_key != "resolution" && sphere_key != "sphere_sample") {
+            // std::istringstream iss(sphere_key);
+            // char ignore;
+            // double sx, sy, sz;
+            // iss >> ignore >> ignore >> ignore >> sx >> ignore >> sy >> ignore >> sz;
+
+            geometry_msgs::msg::Point sphere_position;
+            sphere_position.x = sphere_value[0]["x"];
+            sphere_position.y = sphere_value[0]["y"];
+            sphere_position.z = sphere_value[0]["z"];
+
+            int joint_count = 0;
+            for (const auto& [pose_key, pose_array] : sphere_value[0].items()) {
+                if (pose_key != "x" && pose_key != "y" && pose_key != "z"){
+                    for (const auto& pose : pose_array) {
+                        if (pose.contains("joints") && !pose["joints"].empty()) {
+                            joint_count++;
+                        }
+                    }
+                }
             }
+
+            double color_intensity = std::min(1.0, joint_count / 50.0);  // Normalize joint count to a 0-1 scale
+
+            visualization_msgs::msg::Marker marker;
+            marker.header.frame_id = "map";
+            marker.header.stamp = rclcpp::Clock().now();
+            marker.ns = "spheres";
+            marker.id = id++;
+            marker.type = visualization_msgs::msg::Marker::SPHERE;
+            marker.action = visualization_msgs::msg::Marker::ADD;
+            marker.pose.position = sphere_position;
+            marker.pose.orientation.w = 1.0;
+            marker.scale.x = j["radius"];  // Use radius from JSON
+            marker.scale.y = j["radius"];
+            marker.scale.z = j["radius"];
+            marker.color.r = 1.0 - color_intensity;
+            marker.color.g = color_intensity;
+            marker.color.b = 0.0;
+            marker.color.a = 0.5;
+
+            markers.push_back(marker);
         }
-
-        double color_intensity = std::min(1.0, joint_count / 10.0);  // Normalize joint count to a 0-1 scale
-
-        visualization_msgs::msg::Marker marker;
-        marker.header.frame_id = "map";
-        marker.header.stamp = rclcpp::Clock().now();
-        marker.ns = "spheres";
-        marker.id = id++;
-        marker.type = visualization_msgs::msg::Marker::SPHERE;
-        marker.action = visualization_msgs::msg::Marker::ADD;
-        marker.pose.position = sphere_position;
-        marker.pose.orientation.w = 1.0;
-        marker.scale.x = j["radius"];  // Use radius from JSON
-        marker.scale.y = j["radius"];
-        marker.scale.z = j["radius"];
-        marker.color.r = 1.0 - color_intensity;
-        marker.color.g = color_intensity;
-        marker.color.b = 0.0;
-        marker.color.a = 0.5;
-
-        markers.push_back(marker);
     }
 
     return markers;
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char** argv){
     rclcpp::init(argc, argv);
     auto node = rclcpp::Node::make_shared("sphere_visualization");
 
     std::string filename = "/home/will/master_ik_data.json";
     auto markers = generate_markers(filename);
 
+    RCLCPP_INFO(node->get_logger(), "msg created");
     auto publisher = node->create_publisher<visualization_msgs::msg::MarkerArray>("visualization_marker_array", 10);
 
     rclcpp::Rate rate(1);
