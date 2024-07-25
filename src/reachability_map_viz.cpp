@@ -85,7 +85,7 @@ int main(int argc, char** argv){
     rclcpp::init(argc, argv);
     auto node = rclcpp::Node::make_shared("sphere_visualization");
 
-    std::string filename = "/home/will/master_ik_data.json";
+    std::string filename = "/home/will/new_ik_data.json";
     auto markers = generate_markers(filename);
 
     RCLCPP_INFO(node->get_logger(), "msg created");

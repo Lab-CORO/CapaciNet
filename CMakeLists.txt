@@ -39,6 +39,7 @@ set(dependencies
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/Ik.srv"
         "srv/Fk.srv"
+        "srv/Collisions.srv"
   DEPENDENCIES geometry_msgs sensor_msgs# Add packages that above messages depend on, in this case geometry_msgs for Sphere.msg
 )
 

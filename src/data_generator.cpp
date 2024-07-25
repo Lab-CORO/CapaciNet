@@ -23,7 +23,7 @@ int main(int argc, char **argv) {
     utils::load_poses_from_file("/home/will/master_ik_data.npy", data);
 
     // split data into batches
-    size_t batch_size = 1000;
+    size_t batch_size = 1500;
     std::vector<std::vector<geometry_msgs::msg::Pose>> batches;
     utils::split_data(data,  batch_size, batches);
 
@@ -40,7 +40,7 @@ int main(int argc, char **argv) {
         robot.get_iks(batch, joint_states, joint_states_valid);
         int nb_valide = 0;
         for (size_t i = 0; i < joint_states.size(); i++) {
-            //from ik_data get the sphere with key x, y, z
+            // from ik_data get the sphere with key x, y, z
             if (joint_states_valid[i].data) {
                 // create a pose in the sphere
                 PoseOnSphere p;
@@ -73,7 +73,7 @@ int main(int argc, char **argv) {
     }
     //rnd name for file
 
-    ik_data.write_data("/home/will/new_ik_data.json");
+    ik_data.write_data("/home/will/new_ik_data_test.json");
 
 }
 
