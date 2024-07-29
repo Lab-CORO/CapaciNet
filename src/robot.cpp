@@ -39,9 +39,9 @@ bool Robot::move_joint(joint &j) {
 bool Robot::get_iks(const std::vector<geometry_msgs::msg::Pose> &poses, std::vector<sensor_msgs::msg::JointState> &joint_states, std::vector<std_msgs::msg::Bool> &joint_states_valid){
     // this method call the service ik with the list of all the poses and return the list of all the joint
     // call the sevice /curobo/ik_poses
-    rclcpp::Client<data_generation::srv::Ik>::SharedPtr client = node_->create_client<data_generation::srv::Ik>("/curobo/ik_poses");
+    rclcpp::Client<capacinet_msg::srv::Ik>::SharedPtr client = node_->create_client<capacinet_msg::srv::Ik>("/curobo/ik_poses");
 
-    auto request = std::make_shared<data_generation::srv::Ik::Request>();
+    auto request = std::make_shared<capacinet_msg::srv::Ik::Request>();
 
     request->poses = poses;
     // RCLCPP_INFO(node_->get_logger(), "%f",poses[0].position.x);

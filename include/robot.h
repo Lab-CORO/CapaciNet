@@ -7,7 +7,7 @@
 
 
 #include <Eigen/Dense>
-#include "data_generation/srv/ik.hpp"
+#include "capacinet_msg/srv/ik.hpp"
 #include "master_ik_data.h"
 
 class Robot {

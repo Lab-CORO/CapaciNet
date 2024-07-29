@@ -16,6 +16,9 @@
 #include <sstream>
 #include <iostream>
 #include <cnpy.h>
+
+#include <ament_index_cpp/get_package_share_directory.hpp>
+
 // #include "moveit_msgs/GetPositionIK.h"
 #include "../include/progressbar.hpp"
 // #include <visualization_msgs/Marker.h>
@@ -184,8 +187,8 @@ int main(int argc, char **argv) {
         }
     }
 
-    // save vector to cnpy
-    utils::save_poses_to_file("/home/will/master_ik_data.npy", poses_vector2save);
+    // save vector to cnpy to the data file in data_generation ros package
+    utils::save_poses_to_file(ament_index_cpp::get_package_share_directory("data_generation") + "/data"  , poses_vector2save);
 
 
     // get time

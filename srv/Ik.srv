@@ -1,7 +1,0 @@
-geometry_msgs/Pose[] poses
-
----
-
-sensor_msgs/JointState[] joint_states
-std_msgs/Bool[] joint_states_valid
-std_msgs/String error_msg

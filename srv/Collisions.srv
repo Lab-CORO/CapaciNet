@@ -1,4 +1,0 @@
-string collision_path
-geometry_msgs/Pose pose
----
-bool success
