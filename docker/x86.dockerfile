@@ -193,12 +193,16 @@ RUN sudo apt-get update && sudo apt-get install --reinstall -y \
     hwloc-nox libmpich12 mpich
 
 # RUN mkdir src
+RUN git clone https://github.com/rogersce/cnpy.git
+RUN cd cnpy && mkdir build && cd build && cmake .. && make && make install
 WORKDIR /home/ros2_ws/src
 
 RUN git clone https://github.com/Lab-CORO/CapacitiNet_msg
 RUN cd .. && source /opt/ros/humble/setup.bash && colcon build
 
-RUN git clone https://github.com/Lab-CORO/CapaciNet
+RUN git clone https://github.com/Lab-CORO/CapaciNet  -b main
+RUN cd CapaciNet && mkdir data
 RUN git clone https://github.com/Lab-CORO/curobo_ros
 RUN cd .. && source /opt/ros/humble/setup.bash  && source ./install/setup.bash && colcon build
+RUN echo "source /home/ros2_ws/install/setup.bash" >> ~/.bashrc
 
