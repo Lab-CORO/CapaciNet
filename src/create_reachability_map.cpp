@@ -61,7 +61,7 @@ int main(int argc, char **argv) {
     bool debug = false;
     rclcpp::Time startit = node->get_clock()->now();
     // rclcpp::Time startit = rclcpp::Time::now();
-    float resolution = 0.08; //previous 0.08
+    float resolution = 0.5; //previous 0.08
     // static rclcpp::Publisher marker_pub = node->create_publisher<visualization_msgs::Marker>("/visualization_marker", 10, true);
     // static rclcpp::Publisher cube_pub = node->create_publisher<visualization_msgs::Marker>("/visualization_marker_cube", 10, true);
     rclcpp::Rate loop_rate(10);
@@ -188,7 +188,10 @@ int main(int argc, char **argv) {
     }
 
     // save vector to cnpy to the data file in data_generation ros package
-    utils::save_poses_to_file(ament_index_cpp::get_package_share_directory("data_generation") + "/data"  , poses_vector2save);
+    std::stringstream resolution_string; 
+    resolution_string<<resolution; // appending the float value to the streamclass 
+    std::string result=resolution_string.str(); //converting the float value to string 
+    utils::save_poses_to_file(ament_index_cpp::get_package_share_directory("data_generation") + "/data" + "/master_ik_data" + result + ".npz"  , poses_vector2save);
 
 
     // get time
@@ -196,6 +199,6 @@ int main(int argc, char **argv) {
     rclcpp::Duration duration = end - begin;
     RCLCPP_INFO(node->get_logger(), "Total time taken: %f", duration.seconds());
     // Write the data to json
-    data_ik.write_data("/home/will/master_ik_data.json");
+    data_ik.write_data(ament_index_cpp::get_package_share_directory("data_generation") + "/data"  + "/master_ik_data" + result + ".json");
     RCLCPP_INFO(node->get_logger(), "fini !");
 }

@@ -5,12 +5,15 @@
 
 #include <iostream>
 #include <fstream>
+#include <ctime>
+
 #include "rclcpp/rclcpp.hpp"
 
 #include "../include/robot.h"
 #include "../include/master_ik_data.h"
 #include "../include/utils.h"
 
+#include <ament_index_cpp/get_package_share_directory.hpp>
 
 int main(int argc, char **argv) {
     rclcpp::init(argc, argv);
@@ -18,9 +21,14 @@ int main(int argc, char **argv) {
     // create robot
     Robot robot(node);
     // load data from vector
-
+    float resolution = 0.5;
     std::vector<geometry_msgs::msg::Pose> data;
-    utils::load_poses_from_file("/home/will/master_ik_data.npy", data);
+
+    std::stringstream resolution_string; 
+    resolution_string<<resolution; // appending the float value to the streamclass 
+    std::string result=resolution_string.str(); //converting the float value to string 
+
+    utils::load_poses_from_file(ament_index_cpp::get_package_share_directory("data_generation") + "/data" + "/master_ik_data" + result + ".npz" , data);
 
     // split data into batches
     size_t batch_size = 1500;
@@ -73,7 +81,13 @@ int main(int argc, char **argv) {
     }
     //rnd name for file
 
-    ik_data.write_data("/home/will/new_ik_data_test.json");
+    auto t = std::time(nullptr);
+    auto tm = *std::localtime(&t);
+    // std::string date = std::put_time(&tm, "%d-%m-%Y %H-%M-%S");  
+    std::ostringstream oss;
+    oss << std::put_time(&tm, "%d_%m_%Y_%H_%M_%S");
+    auto date_str = oss.str();
+    ik_data.write_data(ament_index_cpp::get_package_share_directory("data_generation") + "/data/" + date_str + "_" + result +  ".json");
 
 }
 
