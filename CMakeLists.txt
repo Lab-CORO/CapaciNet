@@ -15,7 +15,7 @@ find_package(tf2_geometry_msgs REQUIRED)
 find_package(pcl_ros REQUIRED)
 find_package (Eigen3 REQUIRED)
 # find_package(rosidl_default_generators REQUIRED)
-find_package(capacinet_msg REQUIRED)
+find_package(curobo_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 
 # find_package( REQUIRED)
@@ -60,7 +60,7 @@ target_include_directories(create_reachability_map PUBLIC ${OCTOMAP_INCLUDE_DIRS
 target_link_libraries(create_reachability_map ${OCTOMAP_LIBRARIES})
 #ament_target_dependencies(create_reachability_map rclcpp ${OCTOMAP_LIBRARIES} geometry_msgs tf2_geometry_msgs pcl_ros Eigen3)
 
-ament_target_dependencies(create_reachability_map rclcpp geometry_msgs capacinet_msg tf2_geometry_msgs pcl_ros Eigen3)
+ament_target_dependencies(create_reachability_map rclcpp geometry_msgs curobo_msgs tf2_geometry_msgs pcl_ros Eigen3)
 
 add_executable(generate_data
         src/data_generator.cpp
@@ -78,7 +78,7 @@ add_executable(generate_data
 )
 target_include_directories(generate_data PUBLIC ${OCTOMAP_INCLUDE_DIRS})
 target_link_libraries(generate_data ${OCTOMAP_LIBRARIES})
-ament_target_dependencies(generate_data rclcpp geometry_msgs capacinet_msg tf2_geometry_msgs pcl_ros Eigen3)
+ament_target_dependencies(generate_data rclcpp geometry_msgs curobo_msgs tf2_geometry_msgs pcl_ros Eigen3)
 
 add_executable(reachability_map_viz
         src/reachability_map_viz.cpp
@@ -94,7 +94,7 @@ add_executable(reachability_map_viz
 )
 target_include_directories(reachability_map_viz PUBLIC ${OCTOMAP_INCLUDE_DIRS})
 target_link_libraries(reachability_map_viz ${OCTOMAP_LIBRARIES})
-ament_target_dependencies(reachability_map_viz rclcpp geometry_msgs visualization_msgs capacinet_msg tf2_geometry_msgs pcl_ros Eigen3)
+ament_target_dependencies(reachability_map_viz rclcpp geometry_msgs visualization_msgs curobo_msgs tf2_geometry_msgs pcl_ros Eigen3)
 
 
 install(TARGETS
