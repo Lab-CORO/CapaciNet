@@ -14,11 +14,15 @@
 using json = nlohmann::json;
 
 class DataGenerator {
-//    json file
+    // json file
     std::string filename;
     json json_data;
     MasterIkData ik_data;
     rclcpp::Node node; 
+
+    // service call generate_data fct with trigger msg ros2
+    
+
 
 
 

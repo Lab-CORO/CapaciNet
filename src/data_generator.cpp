@@ -15,6 +15,20 @@
 
 #include <ament_index_cpp/get_package_share_directory.hpp>
 
+
+DataGenerator::DataGenerator(rclcpp::Node::SharedPtr node) : node_(node) {
+    this->robot = Robot(node);
+    
+}
+
+DataGenerator::~DataGenerator(){
+
+}
+
+DataGenerator::callback_generate_ik_datas(){
+    // in the msg we have the resolution to select the correct file
+}
+
 int main(int argc, char **argv) {
     rclcpp::init(argc, argv);
     auto node = rclcpp::Node::make_shared("workspace");
