@@ -11,26 +11,36 @@
 #include "json.hpp"
 #include "robot.h"
 #include "./master_ik_data.h"
+#include "../include/robot.h"
+#include "../include/master_ik_data.h"
+#include "../include/utils.h"
+#include "curobo_msgs/srv/generate_rm.hpp"
+#include <ament_index_cpp/get_package_share_directory.hpp>
+#include <ctime>
+
 using json = nlohmann::json;
 
-class DataGenerator {
-//    json file
+class DataGenerator : public rclcpp::Node
+{
+
+public:
+    DataGenerator();
+    ~DataGenerator();
+    
+    
+
+private:
+    //    json file
     std::string filename;
     json json_data;
     MasterIkData ik_data;
-    rclcpp::Node node; 
-
-
-
-public:
     MasterIkData ik_data_result;
+    // rclcpp::Node node;
+    rclcpp::Service<curobo_msgs::srv::GenerateRM>::SharedPtr service_;
     Robot robot;
-    DataGenerator();
-    ~DataGenerator();
 
-    void data_comparator();
-
+    void callback_generate_rm(const std::shared_ptr<curobo_msgs::srv::GenerateRM::Request> request,
+                              std::shared_ptr<curobo_msgs::srv::GenerateRM::Response> response);
 };
 
-
-#endif //SRC_DATA_GENERATOR_H
+#endif // SRC_DATA_GENERATOR_H
