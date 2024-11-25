@@ -67,7 +67,7 @@ bool ObstacleAdder::is_in_forbidden_zone(double x, double y, double z,
     double z_cube_max = z + size_z / 2;
     
     // x >= start && x <= end
-    x_cube_min <= x_min && x_min <= x_cube_max
+    // x_cube_min <= x_min && x_min <= x_cube_max
     // si xa ou xb sont compris entre x1 et x2 ET ya ou yb sont compris entre y1 et y2 ET za ou zb sont compris entre z1 et z2
     if ((x_cube_min <= x_min && x_min <= x_cube_max) || (x_cube_min <= x_max && x_max <= x_cube_max))
     {

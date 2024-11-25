@@ -19,6 +19,8 @@ find_package (Eigen3 REQUIRED)
 find_package(curobo_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 
+find_package(HDF5 REQUIRED COMPONENTS CXX HL)
+find_package(HighFive REQUIRED)
 # find_package( REQUIRED)
 
 if(BUILD_TESTING)
@@ -105,6 +107,32 @@ target_include_directories(obstacle_adder PUBLIC)
 target_link_libraries(obstacle_adder)
 ament_target_dependencies(obstacle_adder rclcpp std_srvs geometry_msgs visualization_msgs curobo_msgs tf2_geometry_msgs pcl_ros Eigen3)
 
+# Exemple pour highfive
+include_directories(
+  include
+  ${HDF5_INCLUDE_DIRS}
+  ${HighFive_INCLUDE_DIRS}
+  /home/HighFive/include
+)
+# Ajouter l'exécutable du nœud
+add_executable(hdf5_tester src/test_hdf5.cpp)
+
+# Lier les bibliothèques nécessaires
+target_link_libraries(hdf5_tester
+  ${rclcpp_LIBRARIES}
+  ${HDF5_LIBRARIES}
+  ${HighFive_LIBRARIES}
+)
+
+ament_target_dependencies(hdf5_tester
+  rclcpp 
+)
+
+# Installer l'exécutable
+install(TARGETS
+  hdf5_tester
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 
 install(TARGETS
