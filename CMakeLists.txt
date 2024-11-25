@@ -97,10 +97,20 @@ target_link_libraries(reachability_map_viz ${OCTOMAP_LIBRARIES})
 ament_target_dependencies(reachability_map_viz rclcpp geometry_msgs visualization_msgs curobo_msgs tf2_geometry_msgs pcl_ros Eigen3)
 
 
+add_executable(obstacle_adder
+        src/obstacle_adder.cpp
+)
+target_include_directories(obstacle_adder PUBLIC)
+target_link_libraries(obstacle_adder)
+ament_target_dependencies(obstacle_adder rclcpp geometry_msgs visualization_msgs curobo_msgs tf2_geometry_msgs pcl_ros Eigen3)
+
+
+
 install(TARGETS
     create_reachability_map
     reachability_map_viz
     generate_data
+    obstacle_adder
     DESTINATION lib/${PROJECT_NAME}
 
  )
