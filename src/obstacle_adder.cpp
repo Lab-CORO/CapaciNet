@@ -24,7 +24,7 @@ ObstacleAdder::ObstacleAdder() : Node("obstacle_adder")
 
     // Définir les distributions
     this->num_cubes_dist_ = std::uniform_int_distribution<int>(1, 20); // Nombre de cubes entre 1 et 10
-    this->position_dist_ = std::uniform_real_distribution<double>(-2.0, 2.0); // Positions entre -2 et 2
+    this->position_dist_ = std::uniform_real_distribution<double>(-1.0, 1.0); // Positions entre -2 et 2
     this->size_dist_ = std::uniform_real_distribution<double>(0.1, 1.0); // Tailles entre 0.1 et 1.0 mètres
 }
 
