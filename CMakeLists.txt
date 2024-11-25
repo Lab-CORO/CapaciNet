@@ -9,6 +9,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED )
 find_package(geometry_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(octomap REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
@@ -102,7 +103,7 @@ add_executable(obstacle_adder
 )
 target_include_directories(obstacle_adder PUBLIC)
 target_link_libraries(obstacle_adder)
-ament_target_dependencies(obstacle_adder rclcpp geometry_msgs visualization_msgs curobo_msgs tf2_geometry_msgs pcl_ros Eigen3)
+ament_target_dependencies(obstacle_adder rclcpp std_srvs geometry_msgs visualization_msgs curobo_msgs tf2_geometry_msgs pcl_ros Eigen3)
 
 
 
