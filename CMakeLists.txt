@@ -21,6 +21,7 @@ find_package(visualization_msgs REQUIRED)
 
 find_package(HDF5 REQUIRED COMPONENTS CXX HL)
 find_package(HighFive REQUIRED)
+find_package(Open3D REQUIRED)
 # find_package( REQUIRED)
 
 if(BUILD_TESTING)
@@ -112,6 +113,8 @@ include_directories(
   include
   ${HDF5_INCLUDE_DIRS}
   ${HighFive_INCLUDE_DIRS}
+  ${visualization_msgs_INCLUDE_DIRS}
+  ${Open3D_INCLUDE_DIRS}
   /home/HighFive/include
 )
 # Ajouter l'exécutable du nœud
@@ -135,10 +138,25 @@ install(TARGETS
 )
 
 
+# Ajouter l'exécutable
+add_executable(marker_voxel_grid src/marker_voxel_grid.cpp)
+
+# Lier les bibliothèques nécessaires
+ament_target_dependencies(marker_voxel_grid
+  rclcpp
+  visualization_msgs
+)
+
+# Lier Open3D
+target_link_libraries(marker_voxel_grid
+  ${Open3D_LIBRARIES}
+)
+
 install(TARGETS
     create_reachability_map
     reachability_map_viz
     generate_data
+    marker_voxel_grid
     obstacle_adder
     DESTINATION lib/${PROJECT_NAME}
 
