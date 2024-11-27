@@ -17,10 +17,6 @@ public:
         // Initialisation du nuage de points Open3D
         point_cloud_ = std::make_shared<open3d::geometry::PointCloud>();
 
-        // Initialisation du visualiseur dans un thread séparé
-        is_visualizer_running_ = true;
-        visualizer_thread_ = std::thread(&MarkerVoxelGrid::runVisualizer, this);
-
         RCLCPP_INFO(this->get_logger(), "MarkerVoxelGrid node has been started.");
     }
 
@@ -36,8 +32,8 @@ public:
 
 private:
     void marker_callback(const visualization_msgs::msg::MarkerArray::SharedPtr msg)
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
+{
+    std::lock_guard<std::mutex> lock(mutex_);
 
         // Effacer le nuage de points précédent
         point_cloud_->Clear();
@@ -57,44 +53,17 @@ private:
         }
 
         // Créer un Voxel Grid à partir du nuage de points
-        voxel_grid_ = open3d::geometry::VoxelGrid::CreateFromPointCloud(*point_cloud_, voxel_size_);
+        // voxel_grid_ = open3d::geometry::VoxelGrid::CreateFromPointCloud(*point_cloud_, voxel_size_);
 
         // Enregistrer le Voxel Grid dans un fichier
         std::string filename = "marker_voxel_grid.ply";
-        open3d::io::WriteVoxelGrid(filename, *voxel_grid_);
+        open3d::io::WritePointCloud(filename, *point_cloud_);
+
+        // open3d::io::WriteVoxelGrid(filename, *voxel_grid_);
         RCLCPP_INFO(this->get_logger(), "Voxel Grid saved to %s", filename.c_str());
     }
 
-    void runVisualizer()
-    {
-        open3d::visualization::Visualizer visualizer;
-        visualizer.CreateVisualizerWindow("Marker Voxel Grid Viewer", 800, 600);
-
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (voxel_grid_ != nullptr)
-            {
-                visualizer.AddGeometry(voxel_grid_);
-            }
-        }
-
-        while (is_visualizer_running_)
-        {
-            {
-                std::lock_guard<std::mutex> lock(mutex_);
-                if (voxel_grid_ != nullptr)
-                {
-                    visualizer.UpdateGeometry(voxel_grid_);
-                }
-            }
-            visualizer.PollEvents();
-            visualizer.UpdateRender();
-            std::this_thread::sleep_for(std::chrono::milliseconds(30));
-        }
-
-        visualizer.DestroyVisualizerWindow();
-    }
-
+   
     rclcpp::Subscription<visualization_msgs::msg::MarkerArray>::SharedPtr subscription_;
     double voxel_size_;
 
