@@ -66,23 +66,44 @@ target_link_libraries(create_reachability_map ${OCTOMAP_LIBRARIES})
 
 ament_target_dependencies(create_reachability_map rclcpp geometry_msgs curobo_msgs tf2_geometry_msgs pcl_ros Eigen3)
 
-add_executable(generate_data
+add_executable(data_generator_node
         src/data_generator.cpp
+        
         include/sphere_discretization.h
         src/sphere_discretization.cpp
         include/progressbar.hpp
         src/master_ik_data.cpp
         include/master_ik_data.h
         include/json.hpp
-        include/robot.h
-        src/robot.cpp
+        # include/robot.h
+        # src/robot.cpp
         include/utils.h
         src/utils.cpp
-
 )
-target_include_directories(generate_data PUBLIC ${OCTOMAP_INCLUDE_DIRS})
-target_link_libraries(generate_data ${OCTOMAP_LIBRARIES})
-ament_target_dependencies(generate_data rclcpp geometry_msgs curobo_msgs tf2_geometry_msgs pcl_ros Eigen3)
+
+# target_include_directories(generate_data PUBLIC ${OCTOMAP_INCLUDE_DIRS})
+# target_link_libraries(generate_data ${OCTOMAP_LIBRARIES})
+# ament_target_dependencies(generate_data rclcpp geometry_msgs curobo_msgs tf2_geometry_msgs pcl_ros)
+
+# add_executable(data_generator_node src/data_generator.cpp)
+target_link_libraries(data_generator_node ${OCTOMAP_LIBRARIES})
+ament_target_dependencies(data_generator_node rclcpp geometry_msgs curobo_msgs tf2_geometry_msgs pcl_ros)
+
+install(TARGETS
+    data_generator_node
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+add_executable(minimal_param_node src/cpp_parameters_node.cpp)
+target_link_libraries(minimal_param_node ${OCTOMAP_LIBRARIES})
+ament_target_dependencies(minimal_param_node rclcpp geometry_msgs curobo_msgs tf2_geometry_msgs pcl_ros)
+
+install(TARGETS
+    minimal_param_node
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+
 
 add_executable(reachability_map_viz
         src/reachability_map_viz.cpp
@@ -152,10 +173,12 @@ target_link_libraries(marker_voxel_grid
   ${Open3D_LIBRARIES}
 )
 
+
+
 install(TARGETS
     create_reachability_map
     reachability_map_viz
-    generate_data
+    # generate_data
     marker_voxel_grid
     obstacle_adder
     DESTINATION lib/${PROJECT_NAME}

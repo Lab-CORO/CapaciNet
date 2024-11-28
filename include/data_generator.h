@@ -18,29 +18,29 @@
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <ctime>
 
-using json = nlohmann::json;
+// using json = nlohmann::json;
 
-class DataGenerator : public rclcpp::Node
-{
+// class DataGenerator : public rclcpp::Node
+// {
 
-public:
-    DataGenerator();
-    ~DataGenerator();
+// public:
+//     DataGenerator();
+//     ~DataGenerator();
     
     
 
-private:
-    //    json file
-    std::string filename;
-    json json_data;
-    MasterIkData ik_data;
-    MasterIkData ik_data_result;
-    // rclcpp::Node node;
-    rclcpp::Service<curobo_msgs::srv::GenerateRM>::SharedPtr service_;
-    Robot robot;
+// private:
+//     //    json file
+//     std::string filename;
+//     json json_data;
+//     MasterIkData ik_data;
+//     MasterIkData ik_data_result;
+//     rclcpp::Node node;
+//     rclcpp::Service<curobo_msgs::srv::GenerateRM>::SharedPtr service_;
+//     // Robot robot;
 
-    void callback_generate_rm(const std::shared_ptr<curobo_msgs::srv::GenerateRM::Request> request,
-                              std::shared_ptr<curobo_msgs::srv::GenerateRM::Response> response);
-};
+//     void callback_generate_rm(const std::shared_ptr<curobo_msgs::srv::GenerateRM::Request> request,
+//                               std::shared_ptr<curobo_msgs::srv::GenerateRM::Response> response);
+// };
 
 #endif // SRC_DATA_GENERATOR_H

@@ -200,5 +200,7 @@ int main(int argc, char **argv) {
     RCLCPP_INFO(node->get_logger(), "Total time taken: %f", duration.seconds());
     // Write the data to json
     data_ik.write_data(ament_index_cpp::get_package_share_directory("data_generation") + "/data"  + "/master_ik_data" + result + ".json");
+    // print pwd
+    RCLCPP_INFO(node->get_logger(), "Data saved to: %s", ament_index_cpp::get_package_share_directory("data_generation").c_str());
     RCLCPP_INFO(node->get_logger(), "fini !");
 }
