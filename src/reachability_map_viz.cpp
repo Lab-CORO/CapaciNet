@@ -4,13 +4,49 @@
 
 
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp/publisher.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 #include "../include/json.hpp"
+#include <std_msgs/msg/string.hpp>
 using json = nlohmann::json;
 #include <fstream>
 #include <string>
 
 using json = nlohmann::json;
+#include <chrono>
+#include <functional>
+#include <string>
+
+#include <rclcpp/rclcpp.hpp>
+
+using namespace std::chrono_literals;
+
+class ReachabilityMapVizualisation : public rclcpp::Node
+{
+public:
+  ReachabilityMapVizualisation()
+  : Node("reachability_map_vizualisation_node")
+  {
+    this->declare_parameter("file_name", "/home/will/new_ik_data.json");
+    this->file_name = this->get_parameter("file_name").as_string();
+    
+    // RCLCPP_INFO(node->get_logger(), "msg created");
+    publisher_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("visualization_marker_array", 10);
+    timer_ = this->create_wall_timer(1000ms, std::bind(&ReachabilityMapVizualisation::timer_callback, this));
+  }
+
+    ~ReachabilityMapVizualisation() {}
+
+ void timer_callback()
+  {
+    auto markers = generate_markers(this->file_name);
+
+        visualization_msgs::msg::MarkerArray marker_array;
+        marker_array.markers = markers;
+        publisher_->publish(marker_array);
+       
+    
+  }
 
 std::vector<visualization_msgs::msg::Marker> generate_markers(const std::string& filename) {
     std::ifstream f(filename);
@@ -81,24 +117,19 @@ std::vector<visualization_msgs::msg::Marker> generate_markers(const std::string&
     return markers;
 }
 
+private:
+std::string file_name;
+rclcpp::TimerBase::SharedPtr timer_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr publisher_;
+};
+
+
+
 int main(int argc, char** argv){
     rclcpp::init(argc, argv);
-    auto node = rclcpp::Node::make_shared("sphere_visualization");
+    rclcpp::spin(std::make_shared<ReachabilityMapVizualisation>());
 
-    std::string filename = "/home/will/new_ik_data.json";
-    auto markers = generate_markers(filename);
-
-    RCLCPP_INFO(node->get_logger(), "msg created");
-    auto publisher = node->create_publisher<visualization_msgs::msg::MarkerArray>("visualization_marker_array", 10);
-
-    rclcpp::Rate rate(1);
-    while (rclcpp::ok()) {
-        visualization_msgs::msg::MarkerArray marker_array;
-        marker_array.markers = markers;
-        publisher->publish(marker_array);
-        rclcpp::spin_some(node);
-        rate.sleep();
-    }
+    
 
     rclcpp::shutdown();
     return 0;
