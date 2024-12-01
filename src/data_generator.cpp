@@ -7,7 +7,7 @@
 #include <fstream>
 #include <rclcpp/rclcpp.hpp>
 #include "json.hpp"
-// #include "robot.h"
+// #include "../include/robot.h"
 #include "./master_ik_data.h"
 #include "../include/robot.h"
 #include "../include/master_ik_data.h"
@@ -24,13 +24,14 @@ public:
     DataGenerator()
     : Node("data_generator_node")
 {
-    
-    // robot = Robot(this->shared_from_this());
     this->service_ = this->create_service<curobo_msgs::srv::GenerateRM>(
         "generate_rm", std::bind(&DataGenerator::callback_generate_rm, this, std::placeholders::_1, std::placeholders::_2));
 }
-    
-    
+
+    void initialize()
+    {
+        robot = std::make_shared<Robot>(this->shared_from_this());
+    }
     
 
 private:
@@ -42,6 +43,7 @@ private:
     // rclcpp::Node node;
     rclcpp::Service<curobo_msgs::srv::GenerateRM>::SharedPtr service_;
     // Robot robot;
+    std::shared_ptr<Robot> robot;
 
     void callback_generate_rm(
     std::shared_ptr<curobo_msgs::srv::GenerateRM::Request> request,
@@ -55,6 +57,7 @@ private:
     std::string result = resolution_string.str(); // converting the float value to string
 
     utils::load_poses_from_file(ament_index_cpp::get_package_share_directory("data_generation") + "/data" + "/master_ik_data" + result + ".npz", data);
+    RCLCPP_INFO(this->get_logger(), "Loaded %d poses", data.size());   
 
     // split data into batches
     int batch_size = request->batch_size;
@@ -67,10 +70,11 @@ private:
     // iterate all batches
     for (const auto &batch : batches)
     {
+        // RCLCPP_INFO(this->get_logger(), "Loaded");   
         // send the batch to robot ik
         std::vector<sensor_msgs::msg::JointState> joint_states;
         std::vector<std_msgs::msg::Bool> joint_states_valid;
-        // robot.get_iks(batch, joint_states, joint_states_valid);
+        robot->get_iks(batch, joint_states, joint_states_valid);
         int nb_valide = 0;
         for (size_t i = 0; i < joint_states.size(); i++)
         {
@@ -103,6 +107,7 @@ private:
                 ik_data.update_sphere(batch[i].position.x, batch[i].position.y, batch[i].position.z, p);
             }
         }
+        RCLCPP_INFO(this->get_logger(), "Batch size: %d, nb_valide: %d", batch.size(), nb_valide);
     }
     // rnd name for file
 
@@ -125,7 +130,10 @@ private:
 int main(int argc, char *argv[])
 {
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<DataGenerator>());
+    auto data_generator = std::make_shared<DataGenerator>();
+    data_generator->initialize();
+    
+    rclcpp::spin(data_generator);
     rclcpp::shutdown();
     return 0;
 }

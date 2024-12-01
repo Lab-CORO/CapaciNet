@@ -76,7 +76,7 @@ add_executable(data_generator_node
         include/master_ik_data.h
         include/json.hpp
         # include/robot.h
-        # src/robot.cpp
+        src/robot.cpp
         include/utils.h
         src/utils.cpp
 )
