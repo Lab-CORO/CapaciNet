@@ -2,7 +2,7 @@
 
 #include "../include/sphere_discretization.h"
 #include "rclcpp/rclcpp.hpp"
-// #include <ros/package.h>
+
 #include <octomap/octomap.h>
 #include <octomap/MapCollection.h>
 #include <octomap/math/Utils.h>
@@ -15,21 +15,17 @@
 #include <string>
 #include <sstream>
 #include <iostream>
+#include "curobo_msgs/srv/ik.hpp"
 #include <cnpy.h>
 
 #include <ament_index_cpp/get_package_share_directory.hpp>
-
-// #include "moveit_msgs/GetPositionIK.h"
+\
 #include "../include/progressbar.hpp"
-// #include <visualization_msgs/Marker.h>
-// #include <pcl/io/pcd_io.h>
-// #include <pcl/point_types.h>
-// #include <pcl/common/common.h>
-// #include <pcl/visualization/cloud_viewer.h>
+
 
 
 #include "../include/master_ik_data.h"
-#include "../include/robot.h"
+// #include "../include/robot.h"
 #include "../include/utils.h"
 //struct stat st;
 
@@ -42,6 +38,33 @@ struct stat st;
 typedef std::vector<std::pair<std::vector<double>, const std::vector<double> *> > MultiVector;
 //typedef std::multimap< const std::vector< double >*, const std::vector< double >* > MultiMap;
 
+
+bool get_iks(std::shared_ptr<rclcpp::Node> node, const std::vector<geometry_msgs::msg::Pose> &poses, std::vector<sensor_msgs::msg::JointState> &joint_states, std::vector<std_msgs::msg::Bool> &joint_states_valid){
+    // this method call the service ik with the list of all the poses and return the list of all the joint
+    // call the sevice /curobo/ik_poses
+    rclcpp::Client<curobo_msgs::srv::Ik>::SharedPtr client = node->create_client<curobo_msgs::srv::Ik>("/curobo/ik_poses");
+
+    auto request = std::make_shared<curobo_msgs::srv::Ik::Request>();
+
+    request->poses = poses;
+    // RCLCPP_INFO(node_->get_logger(), "%f",poses[0].position.x);
+    auto result = client->async_send_request(request);
+
+
+    if (rclcpp::spin_until_future_complete(node, result) == rclcpp::FutureReturnCode::SUCCESS) {
+        // RCLCPP_INFO(node_->get_logger(), "Service call successful");
+        auto res = result.get();
+        joint_states = res->joint_states;
+        joint_states_valid = res->joint_states_valid;
+        // RCLCPP_INFO(node_->get_logger(), "Service call successful");
+        return true;
+
+    }else {
+        RCLCPP_ERROR(node->get_logger(), "Service call failed");
+        return false;
+    }
+
+}
 
 bool isFloat(std::string s) {
     std::istringstream iss(s);
@@ -56,7 +79,7 @@ int main(int argc, char **argv) {
     // ros::AsyncSpinner spinner(1);
     // spinner.start();
     //create the robot
-    Robot robot(node);
+    // Robot robot(node);
 
     bool debug = false;
     rclcpp::Time startit = node->get_clock()->now();
@@ -144,7 +167,7 @@ int main(int argc, char **argv) {
         // send all the 50 poses to curobo
         std::vector<sensor_msgs::msg::JointState> joint_states;
         std::vector<std_msgs::msg::Bool> joint_states_valid;
-        robot.get_iks(poses, joint_states, joint_states_valid);
+        get_iks(node, poses, joint_states, joint_states_valid);
 
 
 

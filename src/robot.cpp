@@ -3,8 +3,7 @@
 //
 
 #include "../include/robot.h"
-
-#include <oneapi/tbb/partitioner.h>
+using namespace std::chrono_literals;
 
 
 Robot::Robot(rclcpp::Node::SharedPtr node) : node_(node) {}
@@ -37,29 +36,29 @@ bool Robot::move_joint(joint &j) {
 
 
 // bool Robot::get_iks(const std::vector<geometry_msgs::msg::Pose> &poses, std::vector<sensor_msgs::msg::JointState> &joint_states, std::vector<std_msgs::msg::Bool> &joint_states_valid){
-//     // this method call the service ik with the list of all the poses and return the list of all the joint
-//     // call the sevice /curobo/ik_poses
-//     rclcpp::Client<curobo_msgs::srv::Ik>::SharedPtr client = node_->create_client<curobo_msgs::srv::Ik>("/curobo/ik_poses");
+    //     // this method call the service ik with the list of all the poses and return the list of all the joint
+    //     // call the sevice /curobo/ik_poses
+    //     rclcpp::Client<curobo_msgs::srv::Ik>::SharedPtr client = node_->create_client<curobo_msgs::srv::Ik>("/curobo/ik_poses");
 
-//     auto request = std::make_shared<curobo_msgs::srv::Ik::Request>();
+    //     auto request = std::make_shared<curobo_msgs::srv::Ik::Request>();
 
-//     request->poses = poses;
-//     // RCLCPP_INFO(node_->get_logger(), "%f",poses[0].position.x);
-//     auto result = client->async_send_request(request);
+    //     request->poses = poses;
+    //     // RCLCPP_INFO(node_->get_logger(), "%f",poses[0].position.x);
+    //     auto result = client->async_send_request(request);
 
 
-//     if (rclcpp::spin_until_future_complete(node_, result) == rclcpp::FutureReturnCode::SUCCESS) {
-//         // RCLCPP_INFO(node_->get_logger(), "Service call successful");
-//         auto res = result.get();
-//         joint_states = res->joint_states;
-//         joint_states_valid = res->joint_states_valid;
-//         // RCLCPP_INFO(node_->get_logger(), "Service call successful");
-//         return true;
+    //     if (rclcpp::spin_until_future_complete(node_, result) == rclcpp::FutureReturnCode::SUCCESS) {
+    //         // RCLCPP_INFO(node_->get_logger(), "Service call successful");
+    //         auto res = result.get();
+    //         joint_states = res->joint_states;
+    //         joint_states_valid = res->joint_states_valid;
+    //         // RCLCPP_INFO(node_->get_logger(), "Service call successful");
+    //         return true;
 
-//     }else {
-//         RCLCPP_ERROR(node_->get_logger(), "Service call failed");
-//         return false;
-//     }
+    //     }else {
+    //         RCLCPP_ERROR(node_->get_logger(), "Service call failed");
+    //         return false;
+    //     }
 
 // }
 bool Robot::get_iks(
@@ -71,7 +70,7 @@ bool Robot::get_iks(
     auto client = node_->create_client<curobo_msgs::srv::Ik>("/curobo/ik_poses");
 
     // Assurez-vous que le service est disponible
-    if (!client->wait_for_service(std::chrono::seconds(120))) {
+    if (!client->wait_for_service(std::chrono::seconds(5))) {
         RCLCPP_ERROR(node_->get_logger(), "Service /curobo/ik_poses not available");
         return false;
     }
@@ -80,34 +79,37 @@ bool Robot::get_iks(
     auto request = std::make_shared<curobo_msgs::srv::Ik::Request>();
     request->poses = poses;
 
-    // Créez une promesse et une future pour synchroniser la réponse
-    std::promise<bool> promise;
-    auto future = promise.get_future();
+
+    // Créez une promesse et un futur pour synchroniser la réponse
+    auto promise = std::make_shared<std::promise<bool>>();
+    auto future = promise->get_future();
 
     // Envoyez la requête de manière asynchrone avec un callback
     auto result_future = client->async_send_request(
         request,
-        [this, &joint_states, &joint_states_valid, &promise](rclcpp::Client<curobo_msgs::srv::Ik>::SharedFuture result) {
-            // Callback appelé lorsque la réponse est reçue
+        [this, &joint_states, &joint_states_valid, promise](rclcpp::Client<curobo_msgs::srv::Ik>::SharedFuture result) {
             try {
                 auto res = result.get();
                 joint_states = res->joint_states;
                 joint_states_valid = res->joint_states_valid;
-                promise.set_value(true);  // Indique que l'appel a réussi
+                RCLCPP_INFO(node_->get_logger(), "Received response");
+                promise->set_value(true);
             } catch (const std::exception &e) {
                 RCLCPP_ERROR(node_->get_logger(), "Service call failed: %s", e.what());
-                promise.set_value(false);  // Indique que l'appel a échoué
+                promise->set_value(false);
             }
-        });
+        }
+    );
 
-    // Attendre que la future soit prête sans spinner le nœud
-    if (future.wait_for(std::chrono::seconds(120)) == std::future_status::ready) {
+    // Attendre que la promesse soit remplie
+    if (future.wait_for(std::chrono::seconds(10)) == std::future_status::ready) {
         return future.get();
     } else {
         RCLCPP_ERROR(node_->get_logger(), "Service call timed out");
         return false;
     }
 }
+
 
 
 bool Robot::get_all_ik(const std::vector<double> &pose,

@@ -9,6 +9,9 @@
 #include <Eigen/Dense>
 #include "curobo_msgs/srv/ik.hpp"
 #include "master_ik_data.h"
+#include <chrono>
+#include <memory>
+#include "rclcpp/rclcpp.hpp"
 
 class Robot {
 
