@@ -244,3 +244,33 @@ bool Robot::move_cartesian(geometry_msgs::msg::Pose &pose) {
     return true;
 
 }
+
+
+
+// class MyNode : public rclcpp::Node {
+// public:
+//     MyNode() : rclcpp::Node("my_node") {
+//         this->service_client_ = this->create_client<example_interfaces::srv::AddTwoInts>("add_two_ints");
+
+//         this->service_client_->wait_for_service();
+//         auto request = std::make_shared<example_interfaces::srv::AddTwoInts::Request>();
+//         request->a = 1;
+//         request->b = 1;
+//         const auto future = this->service_client_->async_send_request(request,
+//                                                                       std::bind(&MyNode::service_response_callback,
+//                                                                                 this, std::placeholders::_1));
+//         rclcpp::spin_until_future_complete(this->get_node_base_interface(), future);  // Wait for service response
+//     }
+
+//     /// Service response callback
+//     void service_response_callback(rclcpp::Client<example_interfaces::srv::AddTwoInts>::SharedFuture future) {
+//         this->service_response_ = future.get();  // Save service response to the pointer declared outside the scope for further process
+//         std::cout << this->service_response_->sum << std::endl;
+//     }
+
+// private:
+//     rclcpp::Client<example_interfaces::srv::AddTwoInts>::SharedPtr service_client_;
+
+//     example_interfaces::srv::AddTwoInts::Response::SharedPtr service_response_;  // <-- Declare the pointer to the response like this
+
+// };
