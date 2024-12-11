@@ -3,17 +3,23 @@
 //
 
 #include "../include/data_generator.h"
+#include "curobo_msgs/action/data_generation.hpp"
+using DataGenerator = action_tutorials_interfaces::action::Fibonacci;
+using GoalHandleFibonacci = rclcpp_action::ServerGoalHandle<Fibonacci>;
 
-DataGenerator::DataGenerator() : Node("data_generator"), robot(this->shared_from_this())
+DataGeneratorActionServer::DataGeneratorActionServer() : Node("data_generator"), robot(this->shared_from_this())
 {
     // robot = Robot(this->shared_from_this());
     this->service_ = this->create_service<curobo_msgs::srv::GenerateRM>(
         "generate_rm", std::bind(&DataGenerator::callback_generate_rm, this, std::placeholders::_1, std::placeholders::_2));
+    
+
+    
 }
 
-DataGenerator::~DataGenerator() {}
+DataGeneratorActionServer::~DataGeneratorActionServer() {}
 
-void DataGenerator::callback_generate_rm(
+void DataGeneratorActionServer::callback_generate_rm(
     const std::shared_ptr<curobo_msgs::srv::GenerateRM::Request> request,
     std::shared_ptr<curobo_msgs::srv::GenerateRM::Response> response)
 {

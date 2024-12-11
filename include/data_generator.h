@@ -20,12 +20,12 @@
 
 using json = nlohmann::json;
 
-class DataGenerator : public rclcpp::Node
+class DataGeneratorActionServer : public rclcpp::Node
 {
 
 public:
-    DataGenerator();
-    ~DataGenerator();
+    DataGeneratorActionServer();
+    ~DataGeneratorActionServer();
     
     
 
