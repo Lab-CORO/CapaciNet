@@ -22,8 +22,8 @@ class DataGeneratorActionServer : public rclcpp::Node
 {
 public:
     DataGeneratorActionServer()
-        : Node("data_generator"),
-          robot(this->shared_from_this())
+        : Node("data_generator")//,
+        //   robot(this->shared_from_this())
     {
         using namespace std::placeholders;
         
@@ -40,7 +40,7 @@ public:
 
 private:
     rclcpp_action::Server<DataGeneration>::SharedPtr action_server_;
-    Robot robot;
+    // Robot robot;
 
     rclcpp_action::GoalResponse handle_goal(
         const rclcpp_action::GoalUUID &uuid,
@@ -126,7 +126,29 @@ private:
             std::vector<sensor_msgs::msg::JointState> joint_states;
             std::vector<std_msgs::msg::Bool> joint_states_valid;
 
-            robot.get_iks(batch, joint_states, joint_states_valid);
+            // robot.get_iks(batch, joint_states, joint_states_valid);
+
+           rclcpp::Client<curobo_msgs::srv::Ik>::SharedPtr client = this->create_client<curobo_msgs::srv::Ik>("/curobo/ik_poses");
+
+            auto request = std::make_shared<curobo_msgs::srv::Ik::Request>();
+
+            request->poses = batch;
+            // RCLCPP_INFO(node_->get_logger(), "%f",poses[0].position.x);
+            auto result = client->async_send_request(request);
+
+
+            if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), result) == rclcpp::FutureReturnCode::SUCCESS) {
+                // RCLCPP_INFO(node_->get_logger(), "Service call successful");
+                auto res = result.get();
+                joint_states = res->joint_states;
+                joint_states_valid = res->joint_states_valid;
+                // RCLCPP_INFO(node_->get_logger(), "Service call successful");
+                // return true;
+
+            }else {
+                RCLCPP_ERROR(this->get_logger(), "Service call failed");
+                // return false;
+            }
 
             for (size_t i = 0; i < joint_states.size(); i++)
             {
@@ -182,11 +204,11 @@ private:
     }
 };
 
-// int main(int argc, char *argv[])
-// {
-//     rclcpp::init(argc, argv);
-//     auto node = std::make_shared<DataGeneratorActionServer>();
-//     rclcpp::spin(node);
-//     rclcpp::shutdown();
-//     return 0;
-// }
+int main(int argc, char *argv[])
+{
+    rclcpp::init(argc, argv);
+    auto node = std::make_shared<DataGeneratorActionServer>();
+    rclcpp::spin(node);
+    rclcpp::shutdown();
+    return 0;
+}
