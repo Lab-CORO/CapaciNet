@@ -61,7 +61,7 @@ int main(int argc, char **argv) {
     bool debug = false;
     rclcpp::Time startit = node->get_clock()->now();
     // rclcpp::Time startit = rclcpp::Time::now();
-    float resolution = 0.5; //previous 0.08
+    float resolution = 0.08; //previous 0.08
     // static rclcpp::Publisher marker_pub = node->create_publisher<visualization_msgs::Marker>("/visualization_marker", 10, true);
     // static rclcpp::Publisher cube_pub = node->create_publisher<visualization_msgs::Marker>("/visualization_marker_cube", 10, true);
     rclcpp::Rate loop_rate(10);
