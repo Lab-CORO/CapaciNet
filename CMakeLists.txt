@@ -82,7 +82,7 @@ add_executable(generate_data
 )
 target_include_directories(generate_data PUBLIC ${OCTOMAP_INCLUDE_DIRS})
 target_link_libraries(generate_data ${OCTOMAP_LIBRARIES})
-ament_target_dependencies(generate_data rclcpp geometry_msgs curobo_msgs tf2_geometry_msgs pcl_ros Eigen3)
+ament_target_dependencies(generate_data rclcpp std_srvs geometry_msgs curobo_msgs tf2_geometry_msgs pcl_ros Eigen3)
 
 add_executable(reachability_map_viz
         src/reachability_map_viz.cpp
@@ -99,6 +99,22 @@ add_executable(reachability_map_viz
 target_include_directories(reachability_map_viz PUBLIC ${OCTOMAP_INCLUDE_DIRS})
 target_link_libraries(reachability_map_viz ${OCTOMAP_LIBRARIES})
 ament_target_dependencies(reachability_map_viz rclcpp geometry_msgs visualization_msgs curobo_msgs tf2_geometry_msgs pcl_ros Eigen3)
+
+# Add executable for scene manager
+add_executable(scene_manager
+                src/scene_manager.cpp
+)
+target_include_directories(scene_manager PUBLIC )
+target_link_libraries(scene_manager)
+ament_target_dependencies(scene_manager rclcpp std_srvs)
+
+# Add executable for service_test
+add_executable(service_test
+                src/service_test.cpp
+)
+target_include_directories(service_test PUBLIC )
+target_link_libraries(service_test)
+ament_target_dependencies(service_test rclcpp std_srvs)
 
 
 add_executable(obstacle_adder
@@ -158,6 +174,8 @@ install(TARGETS
     generate_data
     marker_voxel_grid
     obstacle_adder
+    scene_manager
+    service_test
     DESTINATION lib/${PROJECT_NAME}
 
  )

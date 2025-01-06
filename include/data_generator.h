@@ -24,7 +24,7 @@ class DataGenerator : public rclcpp::Node
 {
 
 public:
-    DataGenerator();
+    DataGenerator(rclcpp::Node::SharedPtr node);
     ~DataGenerator();
     
     
@@ -35,12 +35,13 @@ private:
     json json_data;
     MasterIkData ik_data;
     MasterIkData ik_data_result;
+    rclcpp::Node::SharedPtr node_;
+    // rclcpp::Client<example_interfaces::srv::AddTwoInts>::SharedPtr client_;
     // rclcpp::Node node;
-    rclcpp::Service<curobo_msgs::srv::GenerateRM>::SharedPtr service_;
+    // rclcpp::Service<curobo_msgs::srv::GenerateRM>::SharedPtr service_;
     Robot robot;
 
-    void callback_generate_rm(const std::shared_ptr<curobo_msgs::srv::GenerateRM::Request> request,
-                              std::shared_ptr<curobo_msgs::srv::GenerateRM::Response> response);
+    void callback_generate_rm(float resolutiion, int batch_size);
 };
 
 #endif // SRC_DATA_GENERATOR_H

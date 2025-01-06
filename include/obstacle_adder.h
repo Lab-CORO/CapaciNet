@@ -17,6 +17,8 @@ public:
     void add_random_cubes();
 
 private:
+    rclcpp::Node::SharedPtr node_;
+    // DataGeneration data_generation_;
     rclcpp::Client<curobo_msgs::srv::AddObject>::SharedPtr client_add_obj;
     rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr client_remove_obj;
     std::mt19937 rng_; // Générateur de nombres aléatoires
