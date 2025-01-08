@@ -83,6 +83,12 @@ add_executable(generate_data
 target_include_directories(generate_data PUBLIC ${OCTOMAP_INCLUDE_DIRS})
 target_link_libraries(generate_data ${OCTOMAP_LIBRARIES})
 ament_target_dependencies(generate_data rclcpp std_srvs geometry_msgs curobo_msgs tf2_geometry_msgs pcl_ros Eigen3)
+# Lier les bibliothèques nécessaires
+target_link_libraries(generate_data
+  ${rclcpp_LIBRARIES}
+  ${HDF5_LIBRARIES}
+  ${HighFive_LIBRARIES}
+)
 
 add_executable(reachability_map_viz
         src/reachability_map_viz.cpp

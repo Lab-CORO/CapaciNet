@@ -115,6 +115,16 @@
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <ctime>
 
+#include <highfive/H5File.hpp>
+
+#include <boost/multi_array.hpp>
+#include <highfive/highfive.hpp>
+// #include <highfive/boost.hpp>
+
+#include <iostream>
+using namespace std;
+using namespace HighFive;
+
 using namespace std::chrono_literals;
 
 namespace cb_data_generator
@@ -124,10 +134,17 @@ namespace cb_data_generator
     public:
         DataGenerator() : Node("client_node")
         {
-            client_cb_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
-            // timer_cb_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
-            service_cb_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+            // create h45 file name from time
+            auto t = std::time(nullptr);
+            auto tm = *std::localtime(&t);
+            std::ostringstream oss;
+            oss << std::put_time(&tm, "%d_%m_%Y_%H_%M_%S");
+            auto date_str = oss.str();
+            this->data_file_path = ament_index_cpp::get_package_share_directory("data_generation") + "/data/" + date_str + ".h5";
 
+            client_cb_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+            service_cb_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+            this->dataset_id = 0;
             auto callback_generate_rm = [this](const std::shared_ptr<curobo_msgs::srv::GenerateRM::Request> request,
                                                std::shared_ptr<curobo_msgs::srv::GenerateRM::Response> response)
             {
@@ -143,13 +160,9 @@ namespace cb_data_generator
                 rmw_qos_profile_services_default,
                 service_cb_group_);
 
-            // client_ptr_ = this->create_client<std_srvs::srv::Empty>("test_service", rmw_qos_profile_services_default,
-            //                                                         client_cb_group_);
-
             client_ik = this->create_client<curobo_msgs::srv::Ik>("/curobo/ik_poses", rmw_qos_profile_services_default,
                                                                   client_cb_group_);
 
-            // timer_ptr_ = this->create_wall_timer(1s, timer_callback, timer_cb_group_);
         }
 
         bool data_generation(int batch_size, float resolution)
@@ -172,6 +185,11 @@ namespace cb_data_generator
             MasterIkData ik_data;
 
             // iterate all batches
+         
+            std::vector<std::array<double, 4>> data_result;
+            double sphere[4];
+            int data_index = 0;
+
             for (const auto &batch : batches)
             {
                 // send the batch to robot ik
@@ -198,53 +216,53 @@ namespace cb_data_generator
                     return false;
                 }
 
-            
-
-                int nb_valide = 0;
                 for (size_t i = 0; i < joint_states.size(); i++)
                 {
+                    if (batch[i].position.x != sphere[0] && batch[i].position.y != sphere[1] && batch[i].position.z != sphere[2])
+                    {
+                        data_result[data_index][0] = sphere[0];
+                        data_result[data_index][1] = sphere[1];
+                        data_result[data_index][2] = sphere[2];
+                        data_result[data_index][3] = sphere[3];
+                        sphere[0] = batch[i].position.x;
+                        sphere[1] = batch[i].position.y;
+                        sphere[2] = batch[i].position.z;
+                        sphere[3] = 0;
+                    }
                     // from ik_data get the sphere with key x, y, z
                     if (joint_states_valid[i].data)
                     {
-                        // create a pose in the sphere
-                        PoseOnSphere p;
-                        p.x = utils::round_to_decimals(batch[i].position.x, 3);
-                        p.y = utils::round_to_decimals(batch[i].position.y, 3);
-                        p.z = utils::round_to_decimals(batch[i].position.z, 3);
-                        p.theta_x = utils::round_to_decimals(batch[i].orientation.x, 6);
-                        p.theta_y = utils::round_to_decimals(batch[i].orientation.y, 6);
-                        p.theta_z = utils::round_to_decimals(batch[i].orientation.z, 6);
-                        p.theta_w = utils::round_to_decimals(batch[i].orientation.w, 6);
-                        // if joint[i] is not empty add the joints to the pose
-                        nb_valide++;
-                        // create a joint
-                        joint join;
-                        join.j1 = joint_states[i].position[0];
-                        join.j2 = joint_states[i].position[1];
-                        join.j3 = joint_states[i].position[2];
-                        join.j4 = joint_states[i].position[3];
-                        join.j5 = joint_states[i].position[4];
-                        join.j6 = joint_states[i].position[5];
-                        // add the joint to the pose
-                        std::vector<joint> joints = {join};
-                        p.add(joints);
-                        // add the pose to the sphere
-                        ik_data.update_sphere(batch[i].position.x, batch[i].position.y, batch[i].position.z, p);
+                        sphere[3] += 1 / 50;
                     }
+                    else
+                    {
+                        sphere[3] += 0 / 50;
+                    }
+                    data_index += 1;
                 }
             }
-            // rnd name for file
-
-            auto t = std::time(nullptr);
-            auto tm = *std::localtime(&t);
-            // std::string date = std::put_time(&tm, "%d-%m-%Y %H-%M-%S");
-            std::ostringstream oss;
-            oss << std::put_time(&tm, "%d_%m_%Y_%H_%M_%S");
-            auto date_str = oss.str();
-            ik_data.write_data(ament_index_cpp::get_package_share_directory("data_generation") + "/data/" + date_str + "_" + result + ".json");
+            this->saveToHDF5(data_result, resolution);
 
             return true;
         }
+
+        void saveToHDF5(const std::vector<std::array<double, 4>> &data,  float voxel_size)
+        {
+            using namespace HighFive;
+
+   
+            size_t data_size = data.size();
+            File data_file(this->data_file_path, File::ReadWrite | File::Truncate);
+
+            std::vector<size_t> dims{data_size, 4};
+
+            std::string dataset_id_s = std::to_string(this->dataset_id);
+            DataSet dataset = data_file.createDataSet<double>("/group/" + dataset_id_s + "/voxel_map", DataSpace(dims));
+            dataset.write(data);
+
+            data_file.createDataSet("/group/" + dataset_id_s + "/voxel_map", voxel_size);
+        }
+
 
     private:
         rclcpp::CallbackGroup::SharedPtr client_cb_group_;
@@ -253,6 +271,8 @@ namespace cb_data_generator
         rclcpp::TimerBase::SharedPtr timer_ptr_;
         rclcpp::Service<curobo_msgs::srv::GenerateRM>::SharedPtr service_;
         rclcpp::Client<curobo_msgs::srv::Ik>::SharedPtr client_ik;
+        std::string data_file_path;
+        int dataset_id;
 
     }; // class DemoNode
 } // namespace cb_group_demo
