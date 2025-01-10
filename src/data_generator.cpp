@@ -61,7 +61,7 @@ namespace cb_data_generator
                 rmw_qos_profile_services_default,
                 service_cb_group_);
 
-            client_ik = this->create_client<curobo_msgs::srv::Ik>("/curobo/ik_poses", rmw_qos_profile_services_default,
+            client_ik = this->create_client<curobo_msgs::srv::Ik>("/curobo_ik/ik_batch_poses", rmw_qos_profile_services_default,
                                                                   client_cb_group_);
             client_voxel_grid = this->create_client<curobo_msgs::srv::GetVoxelGrid>("/curobo_gen_traj/get_voxel_grid", rmw_qos_profile_services_default,
                                                                                     client_voxel_cb_group_);
@@ -97,7 +97,6 @@ namespace cb_data_generator
                 // send the batch to robot ik
                 std::vector<sensor_msgs::msg::JointState> joint_states;
                 std::vector<std_msgs::msg::Bool> joint_states_valid;
-                // robot.get_iks(batch, joint_states, joint_states_valid);
 
                 auto request = std::make_shared<curobo_msgs::srv::Ik::Request>();
 

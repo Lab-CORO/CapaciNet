@@ -19,60 +19,56 @@
 
 #include <ament_index_cpp/get_package_share_directory.hpp>
 
-// #include "moveit_msgs/GetPositionIK.h"
 #include "../include/progressbar.hpp"
-// #include <visualization_msgs/Marker.h>
-// #include <pcl/io/pcd_io.h>
-// #include <pcl/point_types.h>
-// #include <pcl/common/common.h>
-// #include <pcl/visualization/cloud_viewer.h>
 
 
 #include "../include/master_ik_data.h"
 #include "../include/robot.h"
 #include "../include/utils.h"
-//struct stat st;
+
 
 typedef std::multimap<const std::vector<double> *, const std::vector<double> *> MultiMapPtr;
 typedef std::map<const std::vector<double> *, double> MapVecDoublePtr;
-typedef std::multimap<std::vector<double>, std::vector<double> > MultiMap;
+typedef std::multimap<std::vector<double>, std::vector<double>> MultiMap;
 typedef std::map<std::vector<double>, double> MapVecDouble;
-typedef std::vector<std::vector<double> > VectorOfVectors;
+typedef std::vector<std::vector<double>> VectorOfVectors;
 struct stat st;
-typedef std::vector<std::pair<std::vector<double>, const std::vector<double> *> > MultiVector;
-//typedef std::multimap< const std::vector< double >*, const std::vector< double >* > MultiMap;
+typedef std::vector<std::pair<std::vector<double>, const std::vector<double> *>> MultiVector;
 
+using namespace std::chrono_literals;
 
-bool isFloat(std::string s) {
+bool isFloat(std::string s)
+{
     std::istringstream iss(s);
     float dummy;
     iss >> std::noskipws >> dummy;
     return iss && iss.eof(); // Result converted to bool
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv)
+{
     rclcpp::init(argc, argv);
     auto node = rclcpp::Node::make_shared("workspace");
-    // ros::AsyncSpinner spinner(1);
-    // spinner.start();
-    //create the robot
-    Robot robot(node);
+
+    rclcpp::Client<curobo_msgs::srv::Ik>::SharedPtr client_ik = node->create_client<curobo_msgs::srv::Ik>("/curobo_ik/ik_batch_poses", rmw_qos_profile_services_default);
+    // wait for the service up
+    while (!client_ik->wait_for_service(1s))
+    {
+        if (!rclcpp::ok())
+        {
+            RCLCPP_ERROR(rclcpp::get_logger("rclcpp"), "Interrupted while waiting for the service. Exiting.");
+            return 0;
+        }
+        RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "service not available, waiting again...");
+    }
 
     bool debug = false;
     rclcpp::Time startit = node->get_clock()->now();
-    // rclcpp::Time startit = rclcpp::Time::now();
-    float resolution = 0.08; //previous 0.08
-    // static rclcpp::Publisher marker_pub = node->create_publisher<visualization_msgs::Marker>("/visualization_marker", 10, true);
-    // static rclcpp::Publisher cube_pub = node->create_publisher<visualization_msgs::Marker>("/visualization_marker_cube", 10, true);
-    rclcpp::Rate loop_rate(10);
-
-    // pcl::PointCloud<pcl::PointXYZ> cloud;
-    // pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_ptr = cloud.makeShared();
+    float resolution = 0.08; // previous 0.08
 
     int count = 0;
     //    get time
     rclcpp::Time begin = node->get_clock()->now();
-
 
     unsigned char max_depth = 16;
     unsigned char minDepth = 0;
@@ -90,15 +86,15 @@ int main(int argc, char **argv) {
     std::vector<octomap::point3d> new_data;
     RCLCPP_INFO(node->get_logger(), "Creating the box and discretizing with resolution: %f", resolution);
     int sphere_count = 0;
-    for (octomap::OcTree::leaf_iterator it = tree->begin_leafs(max_depth), end = tree->end_leafs(); it != end; ++it) {
+    for (octomap::OcTree::leaf_iterator it = tree->begin_leafs(max_depth), end = tree->end_leafs(); it != end; ++it)
+    {
         sphere_count++;
     }
     new_data.reserve(sphere_count);
-    for (octomap::OcTree::leaf_iterator it = tree->begin_leafs(max_depth), end = tree->end_leafs(); it != end; ++it) {
+    for (octomap::OcTree::leaf_iterator it = tree->begin_leafs(max_depth), end = tree->end_leafs(); it != end; ++it)
+    {
         new_data.push_back(it.getCoordinate());
     }
-
-
 
     RCLCPP_INFO(node->get_logger(), "Total no of spheres now: %lu", new_data.size());
     RCLCPP_INFO(node->get_logger(),
@@ -112,7 +108,7 @@ int main(int argc, char **argv) {
     // Every discretized points on spheres are converted to pose and all the poses are saved in a multimap with their
     // corresponding sphere centers
     // If the resolution is 0.01 the programs not responds
-    //TODO seperate raduise and resolutiion
+    // TODO seperate raduise and resolutiion
     float radius = 0.0001;
 
     VectorOfVectors sphere_coord;
@@ -121,13 +117,13 @@ int main(int argc, char **argv) {
     MultiVector pose_col;
     pose_col.reserve(new_data.size() * 50);
 
-    MasterIkData data_ik;
     progressbar bar(new_data.size());
 
     // vector of 7d to save with cnpy
     std::vector<geometry_msgs::msg::Pose> poses_vector2save;
 
-    for (int i = 0; i < new_data.size(); i++) {
+    for (int i = 0; i < new_data.size(); i++)
+    {
         bar.update();
         static std::vector<geometry_msgs::msg::Pose> poses;
         sd.convertPointToVector(new_data[i], sphere_coord[i]);
@@ -144,12 +140,28 @@ int main(int argc, char **argv) {
         // send all the 50 poses to curobo
         std::vector<sensor_msgs::msg::JointState> joint_states;
         std::vector<std_msgs::msg::Bool> joint_states_valid;
-        robot.get_iks(poses, joint_states, joint_states_valid);
 
+        auto request = std::make_shared<curobo_msgs::srv::Ik::Request>();
 
+        request->poses = poses;
+        auto result_future = client_ik->async_send_request(request);
 
-        for (int j = 0; j < joint_states.size(); j++) {
-            if (joint_states_valid[j].data) {
+        if (rclcpp::spin_until_future_complete(node, result_future) == rclcpp::FutureReturnCode::SUCCESS)
+        {
+            auto res = result_future.get();
+            joint_states = res->joint_states;
+            joint_states_valid = res->joint_states_valid;
+        }
+        else
+        {
+            RCLCPP_ERROR(node->get_logger(), "Service call failed");
+            return false;
+        }
+
+        for (int j = 0; j < joint_states.size(); j++)
+        {
+            if (joint_states_valid[j].data)
+            {
                 // save the pose in vector
 
                 poses_vector2save.push_back(poses[j]);
@@ -179,26 +191,18 @@ int main(int argc, char **argv) {
                 // add the pose to the sphere
                 sphere.add(p);
             }
-
-        }
-        //  add the sphere to the master_ik
-        if(sphere.has_points()){
-            data_ik.add(sphere);
         }
     }
 
     // save vector to cnpy to the data file in data_generation ros package
-    std::stringstream resolution_string; 
-    resolution_string<<resolution; // appending the float value to the streamclass 
-    std::string result=resolution_string.str(); //converting the float value to string 
-    utils::save_poses_to_file(ament_index_cpp::get_package_share_directory("data_generation") + "/data" + "/master_ik_data" + result + ".npz"  , poses_vector2save);
-
+    std::stringstream resolution_string;
+    resolution_string << resolution;              // appending the float value to the streamclass
+    std::string result = resolution_string.str(); // converting the float value to string
+    utils::save_poses_to_file(ament_index_cpp::get_package_share_directory("data_generation") + "/data" + "/master_ik_data" + result + ".npz", poses_vector2save);
 
     // get time
     rclcpp::Time end = node->get_clock()->now();
     rclcpp::Duration duration = end - begin;
     RCLCPP_INFO(node->get_logger(), "Total time taken: %f", duration.seconds());
-    // Write the data to json
-    data_ik.write_data(ament_index_cpp::get_package_share_directory("data_generation") + "/data"  + "/master_ik_data" + result + ".json");
     RCLCPP_INFO(node->get_logger(), "fini !");
 }
