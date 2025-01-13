@@ -114,13 +114,6 @@ target_include_directories(scene_manager PUBLIC )
 target_link_libraries(scene_manager)
 ament_target_dependencies(scene_manager rclcpp std_srvs)
 
-# Add executable for service_test
-add_executable(service_test
-                src/service_test.cpp
-)
-target_include_directories(service_test PUBLIC )
-target_link_libraries(service_test)
-ament_target_dependencies(service_test rclcpp std_srvs)
 
 
 add_executable(obstacle_adder
@@ -139,25 +132,7 @@ include_directories(
   ${Open3D_INCLUDE_DIRS}
   /home/HighFive/include
 )
-# Ajouter l'exécutable du nœud
-add_executable(hdf5_tester src/test_hdf5.cpp)
 
-# Lier les bibliothèques nécessaires
-target_link_libraries(hdf5_tester
-  ${rclcpp_LIBRARIES}
-  ${HDF5_LIBRARIES}
-  ${HighFive_LIBRARIES}
-)
-
-ament_target_dependencies(hdf5_tester
-  rclcpp 
-)
-
-# Installer l'exécutable
-install(TARGETS
-  hdf5_tester
-  DESTINATION lib/${PROJECT_NAME}
-)
 
 
 # Ajouter l'exécutable
@@ -181,7 +156,6 @@ install(TARGETS
     marker_voxel_grid
     obstacle_adder
     scene_manager
-    service_test
     DESTINATION lib/${PROJECT_NAME}
 
  )
