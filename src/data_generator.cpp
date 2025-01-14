@@ -63,7 +63,7 @@ namespace cb_data_generator
 
             client_ik = this->create_client<curobo_msgs::srv::Ik>("/curobo_ik/ik_batch_poses", rmw_qos_profile_services_default,
                                                                   client_cb_group_);
-            client_voxel_grid = this->create_client<curobo_msgs::srv::GetVoxelGrid>("/curobo_gen_traj/get_voxel_grid", rmw_qos_profile_services_default,
+            client_voxel_grid = this->create_client<curobo_msgs::srv::GetVoxelGrid>("/curobo_ik/get_voxel_grid", rmw_qos_profile_services_default,
                                                                                     client_voxel_cb_group_);
         }
 
@@ -77,7 +77,7 @@ namespace cb_data_generator
             std::string result = resolution_string.str(); // converting the float value to string
 
             utils::load_poses_from_file(ament_index_cpp::get_package_share_directory("data_generation") + "/data" + "/master_ik_data" + result + ".npz", data);
-
+//            RCLCPP_INFO(node_->get_logger(), "data open " );
             // split data into batches
 
             std::vector<std::vector<geometry_msgs::msg::Pose>> batches;
@@ -119,17 +119,21 @@ namespace cb_data_generator
 
                 for (size_t i = 0; i < joint_states.size(); i++)
                 {
+
                     if (batch[i].position.x != sphere[0] && batch[i].position.y != sphere[1] && batch[i].position.z != sphere[2])
                     {
-                        data_result[data_index][0] = sphere[0];
-                        data_result[data_index][1] = sphere[1];
-                        data_result[data_index][2] = sphere[2];
-                        data_result[data_index][3] = sphere[3];
+                    data_result.push_back(std::array<double, 4>{sphere[0], sphere[1], sphere[2], sphere[3]});
+//                        [data_index][0] = sphere[0];
+//                        data_result[data_index][1] = sphere[1];
+//                        data_result[data_index][2] = sphere[2];
+//                        data_result[data_index][3] = sphere[3];
+//                        RCLCPP_WARN(this->get_logger(), "sphere 0 : %f",batch[i].position.x);
                         sphere[0] = batch[i].position.x;
                         sphere[1] = batch[i].position.y;
                         sphere[2] = batch[i].position.z;
                         sphere[3] = 0;
                     }
+
                     // from ik_data get the sphere with key x, y, z
                     if (joint_states_valid[i].data)
                     {
@@ -142,10 +146,11 @@ namespace cb_data_generator
                     data_index += 1;
                 }
             }
+
             std::vector<std::array<double, 4>> voxel_map = {};
             this->get_voxel_map(voxel_map);
             this->saveToHDF5(data_result, voxel_map, resolution);
-
+            RCLCPP_INFO(this->get_logger(), "Reachability generated !");
             return true;
         }
 
@@ -180,11 +185,11 @@ namespace cb_data_generator
                     {
                         for (int z = 0; z < (int)response->voxel_grid.size_z; ++z)
                         {
-                            voxel_grid[index][0] = response->voxel_grid.origin.x + x * response->voxel_grid.resolutions.x;
-                            voxel_grid[index][1] = response->voxel_grid.origin.y + y * response->voxel_grid.resolutions.y;
-                            voxel_grid[index][2] = response->voxel_grid.origin.z + z * response->voxel_grid.resolutions.z;
-                            voxel_grid[index][3] = response->voxel_grid.data[index];
-                            
+
+                            voxel_grid.push_back(std::array<double, 4>{response->voxel_grid.origin.x + x * response->voxel_grid.resolutions.x,
+                                                                        response->voxel_grid.origin.y + y * response->voxel_grid.resolutions.y,
+                                                                        response->voxel_grid.origin.z + z * response->voxel_grid.resolutions.z,
+                                                                        response->voxel_grid.data[index]});
                             ++index;
                         }
                     }

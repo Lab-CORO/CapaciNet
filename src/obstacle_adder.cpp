@@ -11,11 +11,11 @@ ObstacleAdder::ObstacleAdder() : Node("obstacle_adder")
     client_cb_collision = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
 
     // Création du client pour le service "add_obstacle"
-    client_add_obj = this->create_client<curobo_msgs::srv::AddObject>("/curobo_gen_traj/add_object", rmw_qos_profile_services_default, client_cb_add_obj);
-    client_remove_all_obj = this->create_client<std_srvs::srv::Trigger>("/curobo_gen_traj/remove_all_objects", rmw_qos_profile_services_default, client_cb_remove_all); // trigger
+    client_add_obj = this->create_client<curobo_msgs::srv::AddObject>("/curobo_ik/add_object", rmw_qos_profile_services_default, client_cb_add_obj);
+    client_remove_all_obj = this->create_client<std_srvs::srv::Trigger>("/curobo_ik/remove_all_objects", rmw_qos_profile_services_default, client_cb_remove_all); // trigger
 
-    client_get_collision_dist = this->create_client<curobo_msgs::srv::GetCollisionDistance>("/curobo_gen_traj/get_collision_distance", rmw_qos_profile_services_default, client_cb_collision);
-    client_remove_obj = this->create_client<curobo_msgs::srv::RemoveObject>("/curobo_gen_traj/remove_object", rmw_qos_profile_services_default, client_cb_rm_obj);
+    client_get_collision_dist = this->create_client<curobo_msgs::srv::GetCollisionDistance>("/curobo_ik/get_collision_distance", rmw_qos_profile_services_default, client_cb_collision);
+    client_remove_obj = this->create_client<curobo_msgs::srv::RemoveObject>("/curobo_ik/remove_object", rmw_qos_profile_services_default, client_cb_rm_obj);
 
     // Attendre que le service soit disponible
     while (!client_get_collision_dist->wait_for_service(std::chrono::seconds(1)) &&
