@@ -4,85 +4,76 @@
 
 ObstacleAdder::ObstacleAdder() : Node("obstacle_adder")
 {
+    client_cb_add_obj = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+    client_cb_rm_obj = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+    server_scene_generator = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+    client_cb_remove_all = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+    client_cb_collision = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+
     // Création du client pour le service "add_obstacle"
-    client_add_obj = this->create_client<curobo_msgs::srv::AddObject>("/curobo_gen_traj/add_object");
+    client_add_obj = this->create_client<curobo_msgs::srv::AddObject>("/curobo_gen_traj/add_object", rmw_qos_profile_services_default, client_cb_add_obj);
+    client_remove_all_obj = this->create_client<std_srvs::srv::Trigger>("/curobo_gen_traj/remove_all_objects", rmw_qos_profile_services_default, client_cb_remove_all); // trigger
 
-    while (!client_add_obj->wait_for_service(std::chrono::seconds(1)))
-    {
-        if (!rclcpp::ok())
-        {
-            RCLCPP_ERROR(this->get_logger(), "Interrompu pendant l'attente du service. Sortie.");
-            return;
-        }
-        RCLCPP_INFO(this->get_logger(), "Service non disponible, nouvelle tentative...");
-    }
+    client_get_collision_dist = this->create_client<curobo_msgs::srv::GetCollisionDistance>("/curobo_gen_traj/get_collision_distance", rmw_qos_profile_services_default, client_cb_collision);
+    client_remove_obj = this->create_client<curobo_msgs::srv::RemoveObject>("/curobo_gen_traj/remove_object", rmw_qos_profile_services_default, client_cb_rm_obj);
 
-    client_remove_all_obj = this->create_client<std_srvs::srv::Trigger>("/curobo_gen_traj/remove_all_objects"); // trigger
     // Attendre que le service soit disponible
-    while (!client_remove_all_obj->wait_for_service(std::chrono::seconds(1)))
+    while (!client_get_collision_dist->wait_for_service(std::chrono::seconds(1)) &&
+           !client_remove_obj->wait_for_service(std::chrono::seconds(1)) &&
+           !client_remove_all_obj->wait_for_service(std::chrono::seconds(1)) &&
+           !client_add_obj->wait_for_service(std::chrono::seconds(1)))
     {
         if (!rclcpp::ok())
         {
             RCLCPP_ERROR(this->get_logger(), "Interrompu pendant l'attente du service. Sortie.");
             return;
         }
-        RCLCPP_INFO(this->get_logger(), "Service non disponible, nouvelle tentative...");
-    }
-
-    client_get_collision_dist = this->create_client<curobo_msgs::srv::GetCollisionDistance>("/curobo_gen_traj/get_collision_distance");
-    // Attendre que le service soit disponible
-    while (!client_get_collision_dist->wait_for_service(std::chrono::seconds(1)))
-    {
-        if (!rclcpp::ok())
-        {
-            RCLCPP_ERROR(this->get_logger(), "Interrompu pendant l'attente du service. Sortie.");
-            return;
-        }
-        RCLCPP_INFO(this->get_logger(), "Service non disponible, nouvelle tentative...");
-    }
-
-    client_remove_obj = this->create_client<curobo_msgs::srv::RemoveObject>("/curobo_gen_traj/remove_object");
-    // Attendre que le service soit disponible
-    while (!client_remove_obj->wait_for_service(std::chrono::seconds(1)))
-    {
-        if (!rclcpp::ok())
-        {
-            RCLCPP_ERROR(this->get_logger(), "Interrompu pendant l'attente du service. Sortie.");
-            return;
-        }
-        RCLCPP_INFO(this->get_logger(), "Service non disponible, nouvelle tentative...");
+        RCLCPP_INFO(this->get_logger(), "Services non disponible, nouvelle tentative...");
     }
 
     // Initialiser le générateur de nombres aléatoires avec une graine basée sur le temps
     std::random_device rd;
     rng_ = std::mt19937(rd());
 
-    // Définir les distributions
-    this->num_cubes_dist_ = std::uniform_int_distribution<int>(1, 5);          // Nombre de cubes entre 1 et 10
-    this->position_dist_ = std::uniform_real_distribution<double>(-0.90, 0.9); // Positions entre -2 et 2
-    this->size_dist_ = std::uniform_real_distribution<double>(0.1, 0.5);       // Tailles entre 0.1 et 1.0 mètres
+    auto callback_scene_generator = [this](const std::shared_ptr<curobo_msgs::srv::SceneGenerator::Request> request,
+                                           std::shared_ptr<curobo_msgs::srv::SceneGenerator::Response> response)
+    {
+        auto res = add_random_cubes(request->nb_object, request->max_reach);
+        response->success = res;
+        response->message = "Scene generated";
+        return response;
+    };
+
+    service_ = this->create_service<curobo_msgs::srv::SceneGenerator>(
+        "generate_scene",
+        callback_scene_generator,
+        rmw_qos_profile_services_default,
+        server_scene_generator);
 }
 
 /// @brief Verify the cube to add is not in the forbidden zone
 
-bool ObstacleAdder::is_in_forbidden_zone(string obstacle_name)
+bool ObstacleAdder::is_in_forbidden_zone()
 
 {
     // add the obstacle and call distance collision to check if the cube is in the forbidden zone
 
     auto request = std::make_shared<curobo_msgs::srv::GetCollisionDistance::Request>();
-    
-    auto future = client_get_collision_dist->async_send_request(request);
 
-    if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), future) ==
-        rclcpp::FutureReturnCode::SUCCESS)
+    auto result_future = client_get_collision_dist->async_send_request(request);
+
+    std::future_status status = result_future.wait_for(10s); // timeout to guarantee a graceful finish
+    if (status == std::future_status::ready)
     {
-        auto response = future.get();
+
+        auto response = result_future.get();
         // dillate the response
-        if (response->data[0] > -0.05)
+        if (response->data[0] > -0.05) // >0 in collision so >-0.05 to keep a safe
         {
             return false;
-        }else{
+        }
+        else
+        {
             return true;
         }
     }
@@ -94,13 +85,18 @@ bool ObstacleAdder::is_in_forbidden_zone(string obstacle_name)
     return false;
 }
 
-void ObstacleAdder::add_random_cubes()
+bool ObstacleAdder::add_random_cubes(int nb_object, float max_reach)
 {
+    // Définir les distributions
+    this->num_cubes_dist_ = std::uniform_int_distribution<int>(2, nb_object);        // Nombre de cubes entre 1 et 10
+    this->position_dist_ = std::uniform_real_distribution<double>(-max_reach, max_reach); // Positions entre -2 et 2
+    this->size_dist_ = std::uniform_real_distribution<double>(0.1, 0.5);      // Tailles entre 0.1 et 1.0 mètres
     // Supprimer tous les obstacles existants
     auto request_remove = std::make_shared<std_srvs::srv::Trigger::Request>();
     auto future_remove = client_remove_all_obj->async_send_request(request_remove);
-    if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), future_remove) ==
-        rclcpp::FutureReturnCode::SUCCESS)
+    std::future_status status = future_remove.wait_for(10s); // timeout to guarantee a graceful finish
+    if (status == std::future_status::ready)
+
     {
         auto response = future_remove.get();
         if (response->success)
@@ -132,9 +128,9 @@ void ObstacleAdder::add_random_cubes()
             y = this->position_dist_(rng_);
             z = this->position_dist_(rng_);
             // Générer une taille aléatoire pour le cube
-            cube_size = this->size_dist_(rng_);
+            // cube_size = this->size_dist_(rng_);
             // print size
-            RCLCPP_INFO(this->get_logger(), "Cube size %f", cube_size);
+            // RCLCPP_INFO(this->get_logger(), "Cube size %f", cube_size);
 
             // Création de la requête
             auto request = std::make_shared<curobo_msgs::srv::AddObject::Request>();
@@ -156,9 +152,9 @@ void ObstacleAdder::add_random_cubes()
             request->pose.orientation.w = 1.0;
 
             // Définir les dimensions pour le cube
-            request->dimensions.x = cube_size;
-            request->dimensions.y = cube_size;
-            request->dimensions.z = cube_size;
+            request->dimensions.x = this->size_dist_(rng_);
+            request->dimensions.y = this->size_dist_(rng_);
+            request->dimensions.z = this->size_dist_(rng_);
 
             // Définir une couleur aléatoire
             request->color.r = 1.0;
@@ -170,8 +166,9 @@ void ObstacleAdder::add_random_cubes()
             auto future = client_add_obj->async_send_request(request);
 
             // Attendre le résultat
-            if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), future) ==
-                rclcpp::FutureReturnCode::SUCCESS)
+            std::future_status status = future.wait_for(10s); // timeout to guarantee a graceful finish
+            if (status == std::future_status::ready)
+
             {
                 auto response = future.get();
                 if (response->success)
@@ -187,7 +184,7 @@ void ObstacleAdder::add_random_cubes()
                 RCLCPP_ERROR(this->get_logger(), "Échec de l'appel au service add_obstacle pour l'obstacle '%s'", request->name.c_str());
             }
             // Check if the cube is accepted
-            if (this->is_in_forbidden_zone(request->name))
+            if (this->is_in_forbidden_zone())
             {
                 cube_is_accepted = true;
                 RCLCPP_INFO(this->get_logger(), "Obstacle '%s' ajouté avec succès. Size %f, x = %f, y = %f, z = %f", request->name.c_str(), cube_size, x, y, z);
@@ -199,9 +196,11 @@ void ObstacleAdder::add_random_cubes()
                 request->name = "cube_" + std::to_string(i);
                 auto future = client_remove_obj->async_send_request(request);
 
-                if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), future) ==
-                    rclcpp::FutureReturnCode::SUCCESS)
+                std::future_status status = future.wait_for(10s); // timeout to guarantee a graceful finish
+                if (status == std::future_status::ready)
+
                 {
+                    cube_is_accepted = false;
                     auto response = future.get();
                     if (response->success)
                     {
@@ -218,6 +217,7 @@ void ObstacleAdder::add_random_cubes()
             }
         } while (!cube_is_accepted);
     }
+    return true;
 }
 
 int main(int argc, char **argv)
@@ -229,9 +229,19 @@ int main(int argc, char **argv)
     auto obstacle_adder_node = std::make_shared<ObstacleAdder>();
 
     // Appel de la fonction pour ajouter des cubes aléatoires
-    obstacle_adder_node->add_random_cubes();
+    // obstacle_adder_node->add_random_cubes();
+
+    // TODO TIME OUT FOR THE SERVICE IF ISSUE !!
 
     // Arrêt de ROS2
+    // auto client_node = std::make_shared<cb_data_generator::DataGenerator>();
+    rclcpp::executors::MultiThreadedExecutor executor;
+    executor.add_node(obstacle_adder_node);
+
+    RCLCPP_INFO(obstacle_adder_node->get_logger(), "Starting client node, shut down with CTRL-C");
+    executor.spin();
+    RCLCPP_INFO(obstacle_adder_node->get_logger(), "Keyboard interrupt, shutting down.\n");
+
     rclcpp::shutdown();
     return 0;
 }
