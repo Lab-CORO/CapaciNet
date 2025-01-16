@@ -90,6 +90,19 @@ target_link_libraries(generate_data
   ${HighFive_LIBRARIES}
 )
 
+add_executable(visualize_dataset
+        src/visualize_dataset.cpp
+)
+target_include_directories(visualize_dataset PUBLIC)
+# target_link_libraries(visualize_dataset ${OCTOMAP_LIBRARIES})
+ament_target_dependencies(visualize_dataset rclcpp std_srvs visualization_msgs geometry_msgs curobo_msgs tf2_geometry_msgs pcl_ros Eigen3)
+# Lier les bibliothèques nécessaires
+target_link_libraries(visualize_dataset
+  ${rclcpp_LIBRARIES}
+  ${HDF5_LIBRARIES}
+  ${HighFive_LIBRARIES}
+)
+
 add_executable(reachability_map_viz
         src/reachability_map_viz.cpp
         include/progressbar.hpp
@@ -155,6 +168,7 @@ install(TARGETS
     generate_data
     marker_voxel_grid
     obstacle_adder
+    visualize_dataset
     scene_manager
     DESTINATION lib/${PROJECT_NAME}
 

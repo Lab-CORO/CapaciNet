@@ -77,7 +77,6 @@ namespace cb_data_generator
             std::string result = resolution_string.str(); // converting the float value to string
 
             utils::load_poses_from_file(ament_index_cpp::get_package_share_directory("data_generation") + "/data" + "/master_ik_data" + result + ".npz", data);
-//            RCLCPP_INFO(node_->get_logger(), "data open " );
             // split data into batches
 
             std::vector<std::vector<geometry_msgs::msg::Pose>> batches;
@@ -101,7 +100,6 @@ namespace cb_data_generator
                 auto request = std::make_shared<curobo_msgs::srv::Ik::Request>();
 
                 request->poses = batch;
-                // RCLCPP_INFO(node_->get_logger(), "%f",poses[0].position.x);
                 auto result_future = client_ik->async_send_request(request);
 
                 std::future_status status = result_future.wait_for(10s); // timeout to guarantee a graceful finish
@@ -122,12 +120,7 @@ namespace cb_data_generator
 
                     if (batch[i].position.x != sphere[0] && batch[i].position.y != sphere[1] && batch[i].position.z != sphere[2])
                     {
-                    data_result.push_back(std::array<double, 4>{sphere[0], sphere[1], sphere[2], sphere[3]});
-//                        [data_index][0] = sphere[0];
-//                        data_result[data_index][1] = sphere[1];
-//                        data_result[data_index][2] = sphere[2];
-//                        data_result[data_index][3] = sphere[3];
-//                        RCLCPP_WARN(this->get_logger(), "sphere 0 : %f",batch[i].position.x);
+                        data_result.push_back(std::array<double, 4>{sphere[0], sphere[1], sphere[2], sphere[3]});
                         sphere[0] = batch[i].position.x;
                         sphere[1] = batch[i].position.y;
                         sphere[2] = batch[i].position.z;
@@ -148,14 +141,19 @@ namespace cb_data_generator
             }
 
             std::vector<std::array<double, 4>> voxel_map = {};
-            this->get_voxel_map(voxel_map);
-            this->saveToHDF5(data_result, voxel_map, resolution);
+            int voxel_grid_sizes[3];
+            double voxel_grid_origin[3];
+            this->get_voxel_map(voxel_map, voxel_grid_sizes, voxel_grid_origin);
+            this->saveToHDF5(data_result, voxel_map, resolution, voxel_grid_sizes, voxel_grid_origin);
             RCLCPP_INFO(this->get_logger(), "Reachability generated !");
             return true;
         }
 
+        /**
+         * @brief Generate the voxel grid. Here we generate the voxel grid to save it. For AI porpuse, an occupied voxel is 0 and a free voxel is 1.
+         */
 
-        void get_voxel_map(std::vector<std::array<double, 4>> &voxel_grid)
+        void get_voxel_map(std::vector<std::array<double, 4>> &voxel_grid, int (&voxel_grid_sizes)[3], double (&voxel_grid_origin)[3])
         {
             // Create a client for the `/get_voxel_grid` service
 
@@ -175,8 +173,6 @@ namespace cb_data_generator
             {
                 auto response = result_future.get();
 
-                
-
                 // Iterate through the voxel grid data and add points for occupied voxels
                 int index = 0;
                 for (int x = 0; x < (int)response->voxel_grid.size_x; ++x)
@@ -185,25 +181,31 @@ namespace cb_data_generator
                     {
                         for (int z = 0; z < (int)response->voxel_grid.size_z; ++z)
                         {
-
                             voxel_grid.push_back(std::array<double, 4>{response->voxel_grid.origin.x + x * response->voxel_grid.resolutions.x,
-                                                                        response->voxel_grid.origin.y + y * response->voxel_grid.resolutions.y,
-                                                                        response->voxel_grid.origin.z + z * response->voxel_grid.resolutions.z,
-                                                                        response->voxel_grid.data[index]});
+                                                                       response->voxel_grid.origin.y + y * response->voxel_grid.resolutions.y,
+                                                                       response->voxel_grid.origin.z + z * response->voxel_grid.resolutions.z,
+                                                                       (double)1 - response->voxel_grid.data[index]});
                             ++index;
                         }
                     }
                 }
+                voxel_grid_sizes[0] = (int)response->voxel_grid.size_x;
+                RCLCPP_WARN(this->get_logger(), "voxel size: %d", response->voxel_grid.size_x);
+                voxel_grid_sizes[1] = (int)response->voxel_grid.size_y;
+                voxel_grid_sizes[2] = (int)response->voxel_grid.size_z;
+
+                voxel_grid_origin[0] = response->voxel_grid.origin.x;
+                voxel_grid_origin[1] = response->voxel_grid.origin.y;
+                voxel_grid_origin[2] = response->voxel_grid.origin.z;
             }
             else
             {
                 RCLCPP_ERROR(this->get_logger(), "Failed to call /get_voxel_grid service.");
                 return;
             }
-
         }
 
-        void saveToHDF5(const std::vector<std::array<double, 4>> &data, const std::vector<std::array<double, 4>> &voxel_grid, float voxel_size)
+        void saveToHDF5(const std::vector<std::array<double, 4>> &data, const std::vector<std::array<double, 4>> &voxel_grid, float voxel_size, int (&voxel_grid_sizes)[3], double (&voxel_grid_origin)[3])
         {
             using namespace HighFive;
 
@@ -215,20 +217,39 @@ namespace cb_data_generator
             std::vector<size_t> dims_voxel_grid{voxel_grid_size, 4};
 
             std::string dataset_id_s = std::to_string(this->dataset_id);
-            DataSet dataset_data = data_file.createDataSet<double>("/group/" + dataset_id_s + "/voxel_map", DataSpace(dims));
+            DataSet dataset_data = data_file.createDataSet<double>("/group/" + dataset_id_s + "/reachability_map", DataSpace(dims));
             dataset_data.write(data);
 
-            data_file.createDataSet("/group/" + dataset_id_s + "/voxel_size", voxel_size);
+            // save voxel grid origine
+            data_file.createDataSet<double>("/group/" + dataset_id_s + "/voxel_map/origine/x", voxel_grid_origin[0]);
+            data_file.createDataSet<double>("/group/" + dataset_id_s + "/voxel_map/origine/y", voxel_grid_origin[1]);
+            data_file.createDataSet<double>("/group/" + dataset_id_s + "/voxel_map/origine/z", voxel_grid_origin[2]);
 
-            DataSet dataset_voxelgrid = data_file.createDataSet<double>("/group/" + dataset_id_s + "/voxel_grid", DataSpace(dims_voxel_grid));
+            data_file.createDataSet("/group/" + dataset_id_s + "/voxel_map/voxel_resolutiion", voxel_size);
+            data_file.createDataSet("/group/" + dataset_id_s + "/voxel_map/voxel_size/x", voxel_grid_sizes[0]);
+            data_file.createDataSet("/group/" + dataset_id_s + "/voxel_map/voxel_size/y", voxel_grid_sizes[1]);
+            data_file.createDataSet("/group/" + dataset_id_s + "/voxel_map/voxel_size/z", voxel_grid_sizes[2]);
+
+            DataSet dataset_voxelgrid = data_file.createDataSet<double>("/group/" + dataset_id_s + "/voxel_map/data", DataSpace(dims_voxel_grid));
             dataset_voxelgrid.write(voxel_grid);
+
+            for (size_t i = 0; i < voxel_grid.size(); ++i)
+            {
+                std::ostringstream oss;
+                oss << "voxel_grid[" << i << "]: ";
+                for (size_t j = 0; j < voxel_grid[i].size(); ++j)
+                {
+                    oss << voxel_grid[i][j] << " ";
+                }
+                RCLCPP_INFO(this->get_logger(), oss.str().c_str());
+            }
         }
 
     private:
         rclcpp::CallbackGroup::SharedPtr client_cb_group_;
         rclcpp::CallbackGroup::SharedPtr service_cb_group_;
         rclcpp::CallbackGroup::SharedPtr client_voxel_cb_group_;
-        
+
         rclcpp::Client<std_srvs::srv::Empty>::SharedPtr client_ptr_;
         rclcpp::TimerBase::SharedPtr timer_ptr_;
         rclcpp::Service<curobo_msgs::srv::GenerateRM>::SharedPtr service_;
