@@ -111,7 +111,7 @@ bool ObstacleAdder::add_random_cubes(int nb_object, float max_reach)
     }
     // Déterminer un nombre aléatoire de cubes à ajouter
     int num_cubes = this->num_cubes_dist_(rng_);
-    RCLCPP_INFO(this->get_logger(), "Ajout de %d cube(s) aléatoire(s).", num_cubes);
+    // RCLCPP_INFO(this->get_logger(), "Ajout de %d cube(s) aléatoire(s).", num_cubes);
 
     for (int i = 0; i < num_cubes; ++i)
     {
@@ -184,7 +184,7 @@ bool ObstacleAdder::add_random_cubes(int nb_object, float max_reach)
             if (this->is_in_forbidden_zone())
             {
                 cube_is_accepted = true;
-                RCLCPP_INFO(this->get_logger(), "Obstacle '%s' ajouté avec succès. Size %f, x = %f, y = %f, z = %f", request->name.c_str(), cube_size, x, y, z);
+                // RCLCPP_INFO(this->get_logger(), "Obstacle '%s' ajouté avec succès. Size %f, x = %f, y = %f, z = %f", request->name.c_str(), cube_size, x, y, z);
             }
             else
             {

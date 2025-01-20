@@ -45,18 +45,18 @@ namespace cd_scene_manager
         bool generate_dataset()
         {
             // Loop to call services 100 times
-            for (int i = 0; i < 100; ++i)
+            for (int i = 0; i < 5; ++i)
             {
                 RCLCPP_INFO(this->get_logger(), "Iteration: %d", i + 1);
 
                 // Call /generate_scene service
-                if (!callGenerateScene(50, 1.3))
-                {
-                    RCLCPP_ERROR(this->get_logger(), "Failed to call /generate_scene service");
-                }
+                // if (!callGenerateScene(10, 1.3))
+                // {
+                //     RCLCPP_ERROR(this->get_logger(), "Failed to call /generate_scene service");
+                // }
 
                 // Call /generate_rm service
-                if (!callGenerateRm(0.5, 2500))
+                if (!callGenerateRm(0.5, 2804))
                 {
                     RCLCPP_ERROR(this->get_logger(), "Failed to call /generate_rm service");
                 }
