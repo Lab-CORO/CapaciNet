@@ -18,7 +18,6 @@ public:
     {
         // Declare and get the path to the HDF5 file as a parameter
         this->declare_parameter<std::string>("h5_file_path", "/home/ros2_ws/install/data_generation/share/data_generation/data/16_01_2025_07_07_09.h5");
-        std::string h5_file_path;
         this->get_parameter("h5_file_path", h5_file_path);
 
         if (h5_file_path.empty())
@@ -32,7 +31,7 @@ public:
         {
             // Read data from the HDF5 file
             this->dataset_id = 0;
-            read_hdf5(h5_file_path);
+            read_hdf5(this->h5_file_path);
         }
         catch (const std::exception &e)
         {
@@ -45,7 +44,7 @@ public:
         publisher_ = this->create_publisher<visualization_msgs::msg::Marker>("voxel_map", 10);
         publisher_reachability_map_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("reachability_map", 10);
 
-        timer_ = this->create_wall_timer(1000ms, std::bind(&VoxelMapPublisher::timer_callback, this));
+        timer_ = this->create_wall_timer(5000ms, std::bind(&VoxelMapPublisher::timer_callback, this));
     }
 
     void timer_callback()
@@ -53,9 +52,14 @@ public:
         // Publish the voxel map as a Marker message
         this->publish_voxel_map();
         this->publish_reachability_map();
+        this->dataset_id += 1%100;
+        read_hdf5(this->h5_file_path);
+
     }
 
 private:
+    std::string h5_file_path;
+
     rclcpp::TimerBase::SharedPtr timer_;
 
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr publisher_;
@@ -139,13 +143,17 @@ private:
             marker.header.stamp = this->get_clock()->now();
             marker.ns = "reachability_map";
             marker.id = index;
-            marker.type = visualization_msgs::msg::Marker::SPHERE;
+            marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
             marker.action = visualization_msgs::msg::Marker::ADD;
 
             // Set marker scale
             marker.scale.x = 0.1;
             marker.scale.y = 0.1;
             marker.scale.z = 0.1;
+
+            std::ostringstream oss;
+            oss << this->reachability_map_[index][3];
+            marker.text = oss.str().c_str();
 
         
             marker.pose.position.x = this->reachability_map_[index][0];
@@ -199,7 +207,7 @@ private:
                         marker.color.r = 1.0;
                         marker.color.g = 0.0;
                         marker.color.b = 0.0;
-                        marker.color.a = 1.0;
+                        marker.color.a = 0.5;
                         marker.points.push_back(point);
                     }
                     else

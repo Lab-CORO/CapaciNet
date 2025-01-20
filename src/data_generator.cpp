@@ -8,7 +8,7 @@
 #include "robot.h"
 // #include "./master_ik_data.h"
 #include "../include/robot.h"
-// #include "../include/master_ik_data.h"
+#include "../include/master_ik_data.h"
 #include "../include/utils.h"
 #include "curobo_msgs/srv/generate_rm.hpp"
 #include <curobo_msgs/srv/get_voxel_grid.hpp>
@@ -54,6 +54,7 @@ namespace cb_data_generator
                 auto res = data_generation(request->batch_size, request->resolution);
                 response->success = res;
                 response->message = "Reachability map generated successfully.";
+                RCLCPP_INFO(this->get_logger(), "reach map send back ");
                 return response;
             };
 
@@ -66,8 +67,8 @@ namespace cb_data_generator
             client_ik = this->create_client<curobo_msgs::srv::Ik>("/curobo_ik/ik_batch_poses", rmw_qos_profile_services_default,
                                                                   client_cb_group_);
             client_voxel_grid = this->create_client<curobo_msgs::srv::GetVoxelGrid>("/curobo_ik/get_voxel_grid", rmw_qos_profile_services_default,
-                                                                                    client_voxel_cb_group_);
-            while (!client_ik->wait_for_service(std::chrono::seconds(1)))
+                                                                                    client_cb_group_);
+            while (!client_ik->wait_for_service(std::chrono::seconds(5)))
             {
                 RCLCPP_WARN(this->get_logger(), "/client_ik service is not available, retrying...");
             }
@@ -157,9 +158,7 @@ namespace cb_data_generator
 
             // Calculate the elapsed time in milliseconds
             auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
-            std::ostringstream oss;
-            oss << "RM generation time: " << duration << " ms" << std::endl;
-            RCLCPP_INFO(this->get_logger(), oss.str().c_str());
+            RCLCPP_INFO(this->get_logger(), "RM generation time: %ld ms", duration);
 
             std::vector<std::array<double, 4>> voxel_map = {};
             int voxel_grid_sizes[3];
@@ -173,8 +172,7 @@ namespace cb_data_generator
             end_time = std::chrono::high_resolution_clock::now();
             // Calculate the elapsed time in milliseconds
             duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
-            oss << "Voxel map gen time: " << duration << " ms" << std::endl;
-            RCLCPP_INFO(this->get_logger(), oss.str().c_str());
+            RCLCPP_INFO(this->get_logger(), "Voxel map gen time: %ld ms", duration);
 
             start_time = std::chrono::high_resolution_clock::now();
 
@@ -184,8 +182,7 @@ namespace cb_data_generator
             end_time = std::chrono::high_resolution_clock::now();
             // Calculate the elapsed time in milliseconds
             duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
-            oss << "Save hdf5 time: " << duration << " ms" << std::endl;
-            RCLCPP_INFO(this->get_logger(), oss.str().c_str());
+            RCLCPP_INFO(this->get_logger(), "Save hdf5 time: %ld ms", duration);
 
             RCLCPP_INFO(this->get_logger(), "Reachability generated !");
             return true;
