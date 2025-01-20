@@ -21,11 +21,9 @@
 
 #include "../include/progressbar.hpp"
 
-
 #include "../include/master_ik_data.h"
 #include "../include/robot.h"
 #include "../include/utils.h"
-
 
 typedef std::multimap<const std::vector<double> *, const std::vector<double> *> MultiMapPtr;
 typedef std::map<const std::vector<double> *, double> MapVecDoublePtr;
@@ -64,7 +62,7 @@ int main(int argc, char **argv)
 
     bool debug = false;
     rclcpp::Time startit = node->get_clock()->now();
-    float resolution = 0.08; // previous 0.08
+    float resolution = 0.5; // previous 0.08
 
     int count = 0;
     //    get time
@@ -80,7 +78,7 @@ int main(int argc, char **argv)
     // The center of every voxels are stored in a vector
 
     sphere_discretization::SphereDiscretization sd;
-    float r = 1;
+    float r = 2;
     octomap::point3d origin = octomap::point3d(0, 0, 0); // This point will be the base of the robot
     octomap::OcTree *tree = sd.generateBoxTree(origin, r, resolution);
     std::vector<octomap::point3d> new_data;
@@ -116,7 +114,7 @@ int main(int argc, char **argv)
 
     MultiVector pose_col;
     pose_col.reserve(new_data.size() * 50);
-
+    MasterIkData data_ik;
     progressbar bar(new_data.size());
 
     // vector of 7d to save with cnpy
@@ -192,6 +190,11 @@ int main(int argc, char **argv)
                 sphere.add(p);
             }
         }
+        //  add the sphere to the master_ik
+        if (sphere.has_points())
+        {
+            data_ik.add(sphere);
+        }
     }
 
     // save vector to cnpy to the data file in data_generation ros package
@@ -199,7 +202,7 @@ int main(int argc, char **argv)
     resolution_string << resolution;              // appending the float value to the streamclass
     std::string result = resolution_string.str(); // converting the float value to string
     utils::save_poses_to_file(ament_index_cpp::get_package_share_directory("data_generation") + "/data" + "/master_ik_data" + result + ".npz", poses_vector2save);
-
+    data_ik.write_data(ament_index_cpp::get_package_share_directory("data_generation") + "/data"  + "/master_ik_data" + result + ".json");
     // get time
     rclcpp::Time end = node->get_clock()->now();
     rclcpp::Duration duration = end - begin;

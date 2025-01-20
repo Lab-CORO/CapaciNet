@@ -8,6 +8,7 @@
 
 using namespace std;
 using namespace HighFive;
+using namespace std::chrono_literals;
 
 class VoxelMapPublisher : public rclcpp::Node
 {
@@ -44,15 +45,22 @@ public:
         publisher_ = this->create_publisher<visualization_msgs::msg::Marker>("voxel_map", 10);
         publisher_reachability_map_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("reachability_map", 10);
 
+        timer_ = this->create_wall_timer(1000ms, std::bind(&VoxelMapPublisher::timer_callback, this));
+    }
+
+    void timer_callback()
+    {
         // Publish the voxel map as a Marker message
-        publish_voxel_map();
-        publish_reachability_map();
+        this->publish_voxel_map();
+        this->publish_reachability_map();
     }
 
 private:
+    rclcpp::TimerBase::SharedPtr timer_;
+
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr publisher_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr publisher_reachability_map_;
-    
+
     std::vector<std::array<double, 4>> voxel_map_;        // Voxel map data
     std::vector<std::array<double, 4>> reachability_map_; // reachability map data
     float voxel_resolution_;
@@ -95,16 +103,16 @@ private:
 
         DataSet reachability_map_dataset = file.getDataSet("/group/" + dataset_id_s + "/reachability_map");
         reachability_map_dataset.read(reachability_map_);
-        // for (size_t i = 0; i < reachability_map_.size(); ++i)
-        // {
-        //     std::ostringstream oss;
-        //     oss << "voxel_grid[" << i << "]: ";
-        //     for (size_t j = 0; j < reachability_map_[i].size(); ++j)
-        //     {
-        //         oss << reachability_map_[i][j] << " ";
-        //     }
-        //     RCLCPP_INFO(this->get_logger(), oss.str().c_str());
-        // }
+        for (size_t i = 0; i < reachability_map_.size(); ++i)
+        {
+            std::ostringstream oss;
+            oss << "voxel_grid[" << i << "]: ";
+            for (size_t j = 0; j < reachability_map_[i].size(); ++j)
+            {
+                oss << reachability_map_[i][j] << " ";
+            }
+            RCLCPP_INFO(this->get_logger(), oss.str().c_str());
+        }
 
         // Read the voxel_resolution dataset
         DataSet voxel_resolution_dataset = file.getDataSet("/group/" + dataset_id_s + "/voxel_map/voxel_resolutiion");
@@ -117,61 +125,48 @@ private:
     {
         visualization_msgs::msg::MarkerArray marker_array;
 
-        int index = 0;
-        // Populate marker points from the voxel map
-        for (unsigned int x = 0; x < voxel_grid_size[0]; x++)
+        // int index = 0;
+        //         for (auto & element : vector) {
+        //     element.doSomething ();
+        // }
+
+        for (size_t index = 0; index < reachability_map_.size(); ++index)
         {
-            for (unsigned int y = 0; y < voxel_grid_size[1]; y++)
-            {
-                for (unsigned int z = 0; z < voxel_grid_size[2]; z++)
-                {
-                    visualization_msgs::msg::Marker marker;
-                    marker.header.frame_id = "base_0"; // Adjust frame ID as needed
-                    marker.header.stamp = this->get_clock()->now();
-                    marker.ns = "reachability_map";
-                    marker.id = index;
-                    marker.type = visualization_msgs::msg::Marker::SPHERE;
-                    marker.action = visualization_msgs::msg::Marker::ADD;
+            // Populate marker points from the voxel map
 
-                    // Set marker scale
-                    marker.scale.x = 0.3;
-                    marker.scale.y = 0.3;
-                    marker.scale.z = 0.3;
+            visualization_msgs::msg::Marker marker;
+            marker.header.frame_id = "base_0"; // Adjust frame ID as needed
+            marker.header.stamp = this->get_clock()->now();
+            marker.ns = "reachability_map";
+            marker.id = index;
+            marker.type = visualization_msgs::msg::Marker::SPHERE;
+            marker.action = visualization_msgs::msg::Marker::ADD;
 
-                    if ((double)this->reachability_map_[index][3] == 0)
-                    { // Check if the voxel is occupied
+            // Set marker scale
+            marker.scale.x = 0.1;
+            marker.scale.y = 0.1;
+            marker.scale.z = 0.1;
 
-                        marker.pose.position.x = (double)this->reachability_map_[index][0];
-                        marker.pose.position.y = (double)this->reachability_map_[index][1];
-                        marker.pose.position.z = (double)this->reachability_map_[index][2];
-                        // Set marker default color (transparent green)
-                        marker.color.r = 1.0;
-                        marker.color.g = 0.0;
-                        marker.color.b = 0.0;
-                        marker.color.a = 0.5;
-                        marker_array.markers.push_back(marker);
-                    }
-                    else
-                    {
-                        marker.pose.position.x = (double)this->reachability_map_[index][0];
-                        marker.pose.position.y = (double)this->reachability_map_[index][1];
-                        marker.pose.position.z = (double)this->reachability_map_[index][2];
-                        // Set marker default color (transparent green)
-                        marker.color.r = 0.0;
-                        marker.color.g = 1.0;
-                        marker.color.b = 0.0;
-                        marker.color.a = 0.5;
-                        marker_array.markers.push_back(marker);
-                    }
-                    index++;
-                }
-            }
+        
+            marker.pose.position.x = this->reachability_map_[index][0];
+            marker.pose.position.y = this->reachability_map_[index][1];
+            marker.pose.position.z = this->reachability_map_[index][2];
+            // Set marker default color (transparent green)
+            double rgb_color[3];
+            hsvToRgb(this->reachability_map_[index][3], 1, 1, rgb_color);
+            marker.color.r = rgb_color[0];
+            marker.color.g = rgb_color[1];
+            marker.color.b = rgb_color[2];
+            marker.color.a = 0.50;
+            marker_array.markers.push_back(marker);
+
         }
 
         publisher_reachability_map_->publish(marker_array);
     }
 
-    void publish_voxel_map()
+    void
+    publish_voxel_map()
     {
         visualization_msgs::msg::Marker marker;
         marker.header.frame_id = "base_0"; // Adjust frame ID as needed
@@ -204,7 +199,7 @@ private:
                         marker.color.r = 1.0;
                         marker.color.g = 0.0;
                         marker.color.b = 0.0;
-                        marker.color.a = 0.5;
+                        marker.color.a = 1.0;
                         marker.points.push_back(point);
                     }
                     else
@@ -226,6 +221,16 @@ private:
         }
 
         publisher_->publish(marker);
+    }
+
+    void hsvToRgb(float h, float s, float v, double (&rgb)[3])
+    {
+        float r = 1.0f - h; // goes 1.0 -> 0.0
+        float g = h;        // goes 0.0 -> 1.0
+        float b = 0.0f;     // stays 0.0
+        rgb[0] = r;
+        rgb[1] = g;
+        rgb[2] = b;
     }
 };
 

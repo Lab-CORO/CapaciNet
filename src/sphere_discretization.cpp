@@ -54,11 +54,11 @@ namespace sphere_discretization
     {
         octomap::OcTree* tree = new octomap::OcTree(resolution / 2);
         octomap::Pointcloud p;
-        for (float x = origin.x() - diameter * 1.5; x <= origin.x() + diameter * 1.5; x += resolution)
+        for (float x = origin.x() - diameter; x <= origin.x() + diameter; x += resolution)
         {
-            for (float y = origin.y() - diameter * 1.5; y <= origin.y() + diameter * 1.5; y += resolution)
+            for (float y = origin.y() - diameter; y <= origin.y() + diameter; y += resolution)
             {
-                for (float z = origin.z() - diameter * 1.5; z <= origin.z() + diameter * 1.5; z += resolution)
+                for (float z = origin.z() - diameter; z <= origin.z() + diameter; z += resolution)
                 {
                     // tree ->insertRay(origin, point3d(x,y,z));
                     octomap::point3d point;
