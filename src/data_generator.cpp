@@ -4,7 +4,6 @@
 #include "std_srvs/srv/empty.hpp"
 #include <iostream>
 #include <fstream>
-#include "rclcpp/rclcpp.hpp"
 #include "json.hpp"
 #include "robot.h"
 #include "./master_ik_data.h"
@@ -65,6 +64,11 @@ namespace cb_data_generator
                                                                   client_cb_group_);
             client_voxel_grid = this->create_client<curobo_msgs::srv::GetVoxelGrid>("/curobo_ik/get_voxel_grid", rmw_qos_profile_services_default,
                                                                                     client_voxel_cb_group_);
+            while (!client_ik->wait_for_service(std::chrono::seconds(1)))
+            {
+                RCLCPP_WARN(this->get_logger(), "/client_ik service is not available, retrying...");
+            }
+            RCLCPP_INFO(this->get_logger(), "/client_ik service is now available.");
         }
 
         bool data_generation(int batch_size, float resolution)
@@ -88,7 +92,7 @@ namespace cb_data_generator
             // iterate all batches
 
             std::vector<std::array<double, 4>> data_result;
-            
+
             int data_index = 0;
 
             for (const auto &batch : batches)
@@ -119,7 +123,7 @@ namespace cb_data_generator
                 for (size_t i = 0; i < joint_states.size(); i++)
                 {
 
-                    if (!is_same_point(batch[i].position.x,  batch[i].position.y, batch[i].position.z, sphere[0], sphere[1], sphere[2]))
+                    if (!is_same_point(batch[i].position.x, batch[i].position.y, batch[i].position.z, sphere[0], sphere[1], sphere[2]))
                     {
                         RCLCPP_INFO(this->get_logger(), "sphere: %f", sphere[3]);
                         data_result.push_back(std::array<double, 4>{sphere[0], sphere[1], sphere[2], sphere[3]});

@@ -18,10 +18,7 @@ ObstacleAdder::ObstacleAdder() : Node("obstacle_adder")
     client_remove_obj = this->create_client<curobo_msgs::srv::RemoveObject>("/curobo_ik/remove_object", rmw_qos_profile_services_default, client_cb_rm_obj);
 
     // Attendre que le service soit disponible
-    while (!client_get_collision_dist->wait_for_service(std::chrono::seconds(1)) &&
-           !client_remove_obj->wait_for_service(std::chrono::seconds(1)) &&
-           !client_remove_all_obj->wait_for_service(std::chrono::seconds(1)) &&
-           !client_add_obj->wait_for_service(std::chrono::seconds(1)))
+    while (!client_get_collision_dist->wait_for_service(std::chrono::seconds(1)))
     {
         if (!rclcpp::ok())
         {
