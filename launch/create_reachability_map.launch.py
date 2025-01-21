@@ -12,7 +12,11 @@ import os
 
 def generate_launch_description():
 
-    
+    voxel_size = LaunchConfiguration('voxel_size')
+    voxel_size_arg = DeclareLaunchArgument(
+        'voxel_size',
+        default_value="0.08",  # Set the default value
+    )
 
 
     # Node curobo_ik
@@ -20,7 +24,10 @@ def generate_launch_description():
         package='curobo_ros',
         executable='curobo_ik',
         name='curobo_ik',
-        output='screen'
+        output='screen',
+        parameters=[
+                {"voxel_size": voxel_size}
+            ]
     )
 
     # Node data_gen create reachability map
@@ -28,7 +35,10 @@ def generate_launch_description():
         package='data_generation',
         executable='create_reachability_map',
         name='create_reachability_map',
-        output='screen'
+        output='screen',
+        parameters=[
+                {"voxel_size": voxel_size,}
+        ]
     )
 
     return LaunchDescription([

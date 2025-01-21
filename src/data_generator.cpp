@@ -54,7 +54,7 @@ namespace cb_data_generator
                 auto res = data_generation(request->batch_size, request->resolution);
                 response->success = res;
                 response->message = "Reachability map generated successfully.";
-                RCLCPP_INFO(this->get_logger(), "reach map send back ");
+
                 return response;
             };
 
@@ -88,12 +88,8 @@ namespace cb_data_generator
 
             utils::load_poses_from_file(ament_index_cpp::get_package_share_directory("data_generation") + "/data" + "/master_ik_data" + result + ".npz", data);
             // split data into batches
-
             std::vector<std::vector<geometry_msgs::msg::Pose>> batches;
             utils::split_data(data, batch_size, batches);
-
-            // create a master ik data object
-            // MasterIkData ik_data;
 
             // iterate all batches
 
@@ -101,11 +97,10 @@ namespace cb_data_generator
             data_result.reserve(data.size());
 
             int data_index = 0;
-
+            double sphere[4] = {data[0].position.x, data[0].position.y, data[0].position.z, 0.0};
             for (const auto &batch : batches)
             {
-                RCLCPP_INFO(this->get_logger(), "batch size: %li", batch.size());
-                // double sphere[4] = {batch[0].position.x, batch[0].position.y, batch[0].position.z, 0.0};
+
                 // send the batch to robot ik
                 std::vector<sensor_msgs::msg::JointState> joint_states;
                 std::vector<std_msgs::msg::Bool> joint_states_valid;
@@ -129,21 +124,19 @@ namespace cb_data_generator
                 }
                 // data_result.reserve(data_result.size() + data.size());
 
-                double sphere[4] = {data[0].position.x, data[0].position.y, data[0].position.z, 0.0};
-
                 for (size_t i = 0; i < joint_states.size(); ++i)
                 {
                     // inline distance check
-                    double dx = data[i].position.x - sphere[0];
-                    double dy = data[i].position.y - sphere[1];
-                    double dz = data[i].position.z - sphere[2];
+                    double dx = batch[i].position.x - sphere[0];
+                    double dy = batch[i].position.y - sphere[1];
+                    double dz = batch[i].position.z - sphere[2];
                     double dist_sq = dx * dx + dy * dy + dz * dz;
-                    if (dist_sq > 0.0001)
+                    if (dist_sq > (pow(0.001, 2)))
                     { // epsilon^2
                         data_result.push_back({sphere[0], sphere[1], sphere[2], sphere[3]});
-                        sphere[0] = data[i].position.x;
-                        sphere[1] = data[i].position.y;
-                        sphere[2] = data[i].position.z;
+                        sphere[0] = batch[i].position.x;
+                        sphere[1] = batch[i].position.y;
+                        sphere[2] = batch[i].position.z;
                         sphere[3] = 0.0;
                     }
                     if (joint_states_valid[i].data)
@@ -186,20 +179,6 @@ namespace cb_data_generator
 
             RCLCPP_INFO(this->get_logger(), "Reachability generated !");
             return true;
-        }
-
-        bool is_same_point(float x1, float y1, float z1, float x2, float y2, float z2, float epsilon = 0.01)
-        {
-            // print x, y, z
-            // RCLCPP_INFO(this->get_logger(), "x1: %f, y1: %f, z1: %f", x1, y1, z1);
-
-            float distanceSquared = std::pow(x1 - x2, 2) + std::pow(y1 - y2, 2) + std::pow(z1 - z2, 2);
-            // print x, y, z
-            // RCLCPP_INFO(this->get_logger(), "x2: %f, y2: %f, z2: %f", x2, y2, z2);
-            // print distance
-            // RCLCPP_INFO(this->get_logger(), "distanceSquared: %f", distanceSquared);
-
-            return distanceSquared < std::pow(epsilon, 2);
         }
 
         /**
@@ -285,16 +264,6 @@ namespace cb_data_generator
             DataSet dataset_voxelgrid = this->data_file_->createDataSet<double>("/group/" + dataset_id_s + "/voxel_map/data", DataSpace(dims_voxel_grid));
             dataset_voxelgrid.write(voxel_grid);
             this->dataset_id += 1;
-            // for (size_t i = 0; i < data.size(); ++i)
-            // {
-            //     std::ostringstream oss;
-            //     oss << "voxel_grid[" << i << "]: ";
-            //     for (size_t j = 0; j < data[i].size(); ++j)
-            //     {
-            //         oss << data[i][j] << " ";
-            //     }
-            //     RCLCPP_INFO(this->get_logger(), oss.str().c_str());
-            // }
         }
 
     private:

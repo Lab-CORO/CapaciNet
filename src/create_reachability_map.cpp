@@ -62,7 +62,11 @@ int main(int argc, char **argv)
 
     bool debug = false;
     rclcpp::Time startit = node->get_clock()->now();
-    float resolution = 0.5; // previous 0.08
+
+    float voxel_size = 0;
+    node->declare_parameter("voxel_size", 0.5);
+    node->get_parameter("voxel_size", voxel_size);
+    float resolution = voxel_size;
 
     int count = 0;
     //    get time

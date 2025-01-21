@@ -12,8 +12,26 @@ int main(int argc, char **argv)
 {
     rclcpp::init(argc, argv);
 
-    std::shared_ptr<rclcpp::Node> node = rclcpp::Node::make_shared("scene_manager");
+    std::shared_ptr<rclcpp::Node>
+        node = rclcpp::Node::make_shared("scene_manager");
     rclcpp::Client<curobo_msgs::srv::GenerateRM>::SharedPtr client = node->create_client<curobo_msgs::srv::GenerateRM>("/generate_rm");
+
+    int dataset_size = 0;
+    float voxel_size = 0;
+    int batch_size = 0;
+    float reach_max = 0;
+    int obj_max = 0;
+
+    node->declare_parameter("dataset_size", 125);
+    node->get_parameter("dataset_size", dataset_size);
+    node->declare_parameter("voxel_size", 0.5);
+    node->get_parameter("voxel_size", voxel_size);
+    node->declare_parameter("batch_size", 1000);
+    node->get_parameter("batch_size", batch_size);
+    node->declare_parameter("reach_max", 1.3);
+    node->get_parameter("reach_max", reach_max);
+    node->declare_parameter("obj_max", 20);
+    node->get_parameter("obj_max", obj_max);
 
     while (!client->wait_for_service(5s))
     {
@@ -36,24 +54,14 @@ int main(int argc, char **argv)
         RCLCPP_INFO(rclcpp::get_logger("scene_manager"), "service not available, waiting again...");
     }
     auto start_time = std::chrono::high_resolution_clock::now();
-    for (int i = 0; i < 100; ++i)
+    for (int i = 0; i < dataset_size; ++i)
     {
         RCLCPP_INFO(rclcpp::get_logger("scene_manager"), "Iteration: %d", i + 1);
-        auto request = std::make_shared<curobo_msgs::srv::GenerateRM::Request>();
-        request->resolution = 0.5;
-        request->batch_size = 2804;
 
-        auto result = client->async_send_request(request);
-        // Wait for the result.
-        if (rclcpp::spin_until_future_complete(node, result) !=
-            rclcpp::FutureReturnCode::SUCCESS)
-        {
-            RCLCPP_ERROR(rclcpp::get_logger("scene_manager"), "Failed to call service add_two_ints");
-        }
-
+        // Add obects
         auto request_obj = std::make_shared<curobo_msgs::srv::SceneGenerator::Request>();
-        request_obj->nb_object = 20;
-        request_obj->max_reach = 1.3;
+        request_obj->nb_object = obj_max;
+        request_obj->max_reach = reach_max;
 
         auto result_obj = client_obj->async_send_request(request_obj);
         // Wait for the result.
@@ -63,6 +71,18 @@ int main(int argc, char **argv)
             RCLCPP_ERROR(rclcpp::get_logger("scene_manager"), "Failed to call service add_two_ints");
         }
 
+        // Generate dataset
+        auto request = std::make_shared<curobo_msgs::srv::GenerateRM::Request>();
+        request->resolution = voxel_size;
+        request->batch_size = batch_size;
+
+        auto result = client->async_send_request(request);
+        // Wait for the result.
+        if (rclcpp::spin_until_future_complete(node, result) !=
+            rclcpp::FutureReturnCode::SUCCESS)
+        {
+            RCLCPP_ERROR(rclcpp::get_logger("scene_manager"), "Failed to call service add_two_ints");
+        }
     }
     // End the timer
     auto end_time = std::chrono::high_resolution_clock::now();

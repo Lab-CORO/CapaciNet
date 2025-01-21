@@ -19,6 +19,8 @@ public:
         // Declare and get the path to the HDF5 file as a parameter
         this->declare_parameter<std::string>("h5_file_path", "/home/ros2_ws/install/data_generation/share/data_generation/data/16_01_2025_07_07_09.h5");
         this->get_parameter("h5_file_path", h5_file_path);
+         this->declare_parameter("dataset_size", 5);
+        this->get_parameter("dataset_size", dataset_size);
 
         if (h5_file_path.empty())
         {
@@ -52,13 +54,14 @@ public:
         // Publish the voxel map as a Marker message
         this->publish_voxel_map();
         this->publish_reachability_map();
-        this->dataset_id += 1%100;
+        this->dataset_id = (this->dataset_id + 1) %this->dataset_size;
         read_hdf5(this->h5_file_path);
 
     }
 
 private:
-    std::string h5_file_path;
+    std::string h5_file_path;   
+    std::int32_t dataset_size;
 
     rclcpp::TimerBase::SharedPtr timer_;
 
@@ -128,12 +131,7 @@ private:
     void publish_reachability_map()
     {
         visualization_msgs::msg::MarkerArray marker_array;
-
-        // int index = 0;
-        //         for (auto & element : vector) {
-        //     element.doSomething ();
-        // }
-
+        RCLCPP_INFO(this->get_logger(), "reachability size: %ld", reachability_map_.size());
         for (size_t index = 0; index < reachability_map_.size(); ++index)
         {
             // Populate marker points from the voxel map
