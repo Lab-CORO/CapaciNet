@@ -38,7 +38,8 @@ def generate_launch_description():
         output='screen',
         parameters=[
                 {"voxel_size": voxel_size,}
-        ]
+        ],
+        
     )
 
     return LaunchDescription([

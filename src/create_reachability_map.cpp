@@ -35,6 +35,36 @@ typedef std::vector<std::pair<std::vector<double>, const std::vector<double> *>>
 
 using namespace std::chrono_literals;
 
+std::string generateProgressBar(int current, int total, int bar_width = 50)
+{
+  // Ensure we don't have a division by zero
+  if (total <= 0) {
+    return "[Error: total <= 0]";
+  }
+
+  double progress = static_cast<double>(current) / static_cast<double>(total);
+  // Clamp progress to [0, 1]
+  if (progress < 0.0) progress = 0.0;
+  if (progress > 1.0) progress = 1.0;
+
+  int pos = static_cast<int>(bar_width * progress);
+
+  std::ostringstream bar;
+  bar << "[";
+  for (int i = 0; i < bar_width; ++i) {
+    if (i < pos) {
+      bar << "=";
+    } else if (i == pos) {
+      bar << ">";
+    } else {
+      bar << " ";
+    }
+  }
+  bar << "] " << static_cast<int>(progress * 100.0) << " %";
+
+  return bar.str();
+}
+
 bool isFloat(std::string s)
 {
     std::istringstream iss(s);
@@ -50,7 +80,7 @@ int main(int argc, char **argv)
 
     rclcpp::Client<curobo_msgs::srv::Ik>::SharedPtr client_ik = node->create_client<curobo_msgs::srv::Ik>("/curobo_ik/ik_batch_poses", rmw_qos_profile_services_default);
     // wait for the service up
-    while (!client_ik->wait_for_service(1s))
+    while (!client_ik->wait_for_service(5s))
     {
         if (!rclcpp::ok())
         {
@@ -126,7 +156,8 @@ int main(int argc, char **argv)
 
     for (int i = 0; i < new_data.size(); i++)
     {
-        bar.update();
+        RCLCPP_INFO_STREAM(node->get_logger(), "Progress: " << generateProgressBar(i, new_data.size()));
+        // bar.update();
         static std::vector<geometry_msgs::msg::Pose> poses;
         sd.convertPointToVector(new_data[i], sphere_coord[i]);
         // create a sphere in the master_ik_data
@@ -205,8 +236,9 @@ int main(int argc, char **argv)
     std::stringstream resolution_string;
     resolution_string << resolution;              // appending the float value to the streamclass
     std::string result = resolution_string.str(); // converting the float value to string
-    utils::save_poses_to_file(ament_index_cpp::get_package_share_directory("data_generation") + "/data" + "/master_ik_data" + result + ".npz", poses_vector2save);
-    data_ik.write_data(ament_index_cpp::get_package_share_directory("data_generation") + "/data"  + "/master_ik_data" + result + ".json");
+    utils::save_poses_to_file(std::string("/home/ros2_ws/src/capacitynet") + "/data" + "/master_ik_data" + result + ".npz", poses_vector2save);
+    data_ik.write_data(std::string("/home/ros2_ws/src/capacitynet")+ "/data"  + "/master_ik_data" + result + ".json");
+        // ament_index_cpp::get_package_share_directory("data_generation") + "/data"  + "/master_ik_data" + result + ".json");
     // get time
     rclcpp::Time end = node->get_clock()->now();
     rclcpp::Duration duration = end - begin;

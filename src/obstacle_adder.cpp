@@ -85,9 +85,9 @@ bool ObstacleAdder::is_in_forbidden_zone()
 bool ObstacleAdder::add_random_cubes(int nb_object, float max_reach)
 {
     // Définir les distributions
-    this->num_cubes_dist_ = std::uniform_int_distribution<int>(2, nb_object);        // Nombre de cubes entre 1 et 10
+    this->num_cubes_dist_ = std::uniform_int_distribution<int>(3, nb_object);        // Nombre de cubes entre 1 et 10
     this->position_dist_ = std::uniform_real_distribution<double>(-max_reach, max_reach); // Positions entre -2 et 2
-    this->size_dist_ = std::uniform_real_distribution<double>(0.1, 0.5);      // Tailles entre 0.1 et 1.0 mètres
+    this->size_dist_ = std::uniform_real_distribution<double>(0.05, 0.3);      // Tailles entre 0.1 et 1.0 mètres
     // Supprimer tous les obstacles existants
     auto request_remove = std::make_shared<std_srvs::srv::Trigger::Request>();
     auto future_remove = client_remove_all_obj->async_send_request(request_remove);

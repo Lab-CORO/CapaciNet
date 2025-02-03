@@ -21,6 +21,7 @@ int main(int argc, char **argv)
     int batch_size = 0;
     float reach_max = 0;
     int obj_max = 0;
+    int real_dataset_size = 0;
 
     node->declare_parameter("dataset_size", 125);
     node->get_parameter("dataset_size", dataset_size);
@@ -81,14 +82,21 @@ int main(int argc, char **argv)
         if (rclcpp::spin_until_future_complete(node, result) !=
             rclcpp::FutureReturnCode::SUCCESS)
         {
+            
             RCLCPP_ERROR(rclcpp::get_logger("scene_manager"), "Failed to call service add_two_ints");
+        }else{
+            auto res = result.get();
+            if (res->success){
+                real_dataset_size +=1;
+            }
         }
+        
     }
     // End the timer
     auto end_time = std::chrono::high_resolution_clock::now();
     // Calculate the elapsed time in milliseconds
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
-    RCLCPP_INFO(rclcpp::get_logger("scene_manager"), "Global time generation: %ld ms", duration);
+    RCLCPP_INFO(rclcpp::get_logger("scene_manager"), "Global time generation: %ld ms, Dataset size: %i", duration, real_dataset_size);
     rclcpp::shutdown();
     return 0;
 }

@@ -100,7 +100,6 @@ namespace cb_data_generator
             double sphere[4] = {data[0].position.x, data[0].position.y, data[0].position.z, 0.0};
             for (const auto &batch : batches)
             {
-
                 // send the batch to robot ik
                 std::vector<sensor_msgs::msg::JointState> joint_states;
                 std::vector<std_msgs::msg::Bool> joint_states_valid;
@@ -114,6 +113,10 @@ namespace cb_data_generator
                 if (status == std::future_status::ready)
                 {
                     auto res = result_future.get();
+                    if(!res->success){
+                    RCLCPP_ERROR(this->get_logger(), "Ik batch failed");
+                    return false;
+                }
                     joint_states = res->joint_states;
                     joint_states_valid = res->joint_states_valid;
                 }
@@ -122,6 +125,7 @@ namespace cb_data_generator
                     RCLCPP_ERROR(this->get_logger(), "Service call failed");
                     return false;
                 }
+                
                 // data_result.reserve(data_result.size() + data.size());
 
                 for (size_t i = 0; i < joint_states.size(); ++i)
