@@ -64,8 +64,18 @@ bool utils::split_data(const std::vector<geometry_msgs::msg::Pose>& data, size_t
         return false;
     }
 
+    // get the highest divider with a limit (batch_size)
     size_t total_size = data.size();
-    size_t num_batches = std::ceil(static_cast<double>(total_size) / batch_size);
+    int maxDivider = 1;
+    for (int i = total_size / 2; i >= 1; --i) { // Vérifie les diviseurs à partir de la moitié de n
+        if (total_size % i == 0 && i <= batch_size) {
+            maxDivider = i;
+            break; 
+        }
+    }
+    
+
+    size_t num_batches = maxDivider;
 
     batches.clear();
     for (size_t i = 0; i < num_batches; ++i) {
