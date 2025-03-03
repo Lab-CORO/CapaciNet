@@ -1,0 +1,11 @@
+# Request
+float64 resolution
+int32 batch_size
+---
+# Result
+bool success
+string message
+---
+# Feedback
+int32 batch_id
+int32 batch_nb

@@ -7,7 +7,10 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
-find_package(rclcpp REQUIRED )
+find_package(ament_cmake_python REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(rclpy REQUIRED)
+
 find_package(geometry_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(sensor_msgs REQUIRED)
@@ -162,6 +165,8 @@ target_link_libraries(marker_voxel_grid
   ${Open3D_LIBRARIES}
 )
 
+# Add CPP nodes 
+
 install(TARGETS
     create_reachability_map
     reachability_map_viz
@@ -174,6 +179,15 @@ install(TARGETS
 
  )
 
+# Add python nodes
+ament_python_install_package(${PROJECT_NAME})
+
+install(PROGRAMS
+  capacitynet/pub.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+# Add directories as launch, data .. 
 install(DIRECTORY
   launch
   data

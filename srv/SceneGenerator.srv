@@ -1,0 +1,5 @@
+int8 nb_object
+float32 max_reach
+---
+bool success
+string message
