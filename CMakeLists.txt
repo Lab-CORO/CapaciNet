@@ -47,7 +47,7 @@ set(dependencies
 
 
 
-ament_package()
+
 
 add_executable(create_reachability_map
         src/create_reachability_map.cpp
@@ -183,7 +183,8 @@ install(TARGETS
 ament_python_install_package(${PROJECT_NAME})
 
 install(PROGRAMS
-  capacitynet/pub.py
+  data_generation/pub.py
+  data_generation/heat_map.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -197,3 +198,4 @@ install(DIRECTORY
 
 
 
+ament_package()
