@@ -18,7 +18,7 @@ ObstacleAdder::ObstacleAdder() : Node("obstacle_adder")
     client_remove_obj = this->create_client<curobo_msgs::srv::RemoveObject>("/curobo_ik/remove_object", rmw_qos_profile_services_default, client_cb_rm_obj);
 
     // Attendre que le service soit disponible
-    while (!client_get_collision_dist->wait_for_service(std::chrono::seconds(1)))
+    while (!client_get_collision_dist->wait_for_service(std::chrono::seconds(5)))
     {
         if (!rclcpp::ok())
         {
@@ -117,17 +117,12 @@ bool ObstacleAdder::add_random_cubes(int nb_object, float max_reach)
     {
         // Générer une position aléatoire en évitant la zone interdite
         double x, y, z;
-        double cube_size;
         bool cube_is_accepted = false;
         do
         {
             x = this->position_dist_(rng_);
             y = this->position_dist_(rng_);
             z = this->position_dist_(rng_);
-            // Générer une taille aléatoire pour le cube
-            // cube_size = this->size_dist_(rng_);
-            // print size
-            // RCLCPP_INFO(this->get_logger(), "Cube size %f", cube_size);
 
             // Création de la requête
             auto request = std::make_shared<curobo_msgs::srv::AddObject::Request>();
@@ -225,13 +220,7 @@ int main(int argc, char **argv)
     // Création du nœud
     auto obstacle_adder_node = std::make_shared<ObstacleAdder>();
 
-    // Appel de la fonction pour ajouter des cubes aléatoires
-    // obstacle_adder_node->add_random_cubes();
-
-    // TODO TIME OUT FOR THE SERVICE IF ISSUE !!
-
-    // Arrêt de ROS2
-    // auto client_node = std::make_shared<cb_data_generator::DataGenerator>();
+    // Création de l'executor
     rclcpp::executors::MultiThreadedExecutor executor;
     executor.add_node(obstacle_adder_node);
 

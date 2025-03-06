@@ -45,7 +45,7 @@ int main(int argc, char **argv)
     }
     rclcpp::Client<curobo_msgs::srv::SceneGenerator>::SharedPtr client_obj = node->create_client<curobo_msgs::srv::SceneGenerator>("/generate_scene");
 
-    while (!client_obj->wait_for_service(1s))
+    while (!client_obj->wait_for_service(5s))
     {
         if (!rclcpp::ok())
         {

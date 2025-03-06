@@ -40,7 +40,7 @@ namespace cb_data_generator
             oss << std::put_time(&tm, "%d_%m_%Y_%H_%M_%S");
             auto date_str = oss.str();
             this->data_file_path = ament_index_cpp::get_package_share_directory("data_generation") + "/data/" + date_str + ".h5";
-            data_file_ = std::make_shared<HighFive::File>(
+            this->data_file_ = std::make_shared<HighFive::File>(
                 this->data_file_path,
                 HighFive::File::ReadWrite | HighFive::File::Create);
 
@@ -75,6 +75,12 @@ namespace cb_data_generator
             RCLCPP_INFO(this->get_logger(), "/client_ik service is now available.");
         }
 
+        ~DataGenerator(){
+            this->data_file_->flush();
+            RCLCPP_INFO(this->get_logger(), "DataGenerator is shutting down.");
+            
+        }
+
         bool data_generation(int batch_size, float resolution)
         {
 
@@ -96,7 +102,6 @@ namespace cb_data_generator
             std::vector<std::array<double, 4>> data_result;
             data_result.reserve(data.size());
 
-            int data_index = 0;
             double sphere[4] = {data[0].position.x, data[0].position.y, data[0].position.z, 0.0};
             for (const auto &batch : batches)
             {
