@@ -183,7 +183,6 @@ install(TARGETS
 ament_python_install_package(${PROJECT_NAME})
 
 install(PROGRAMS
-  data_generation/pub.py
   data_generation/heat_map.py
   DESTINATION lib/${PROJECT_NAME}
 )
