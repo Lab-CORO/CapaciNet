@@ -75,10 +75,10 @@ namespace cb_data_generator
             RCLCPP_INFO(this->get_logger(), "/client_ik service is now available.");
         }
 
-        ~DataGenerator(){
+        ~DataGenerator()
+        {
             this->data_file_->flush();
             RCLCPP_INFO(this->get_logger(), "DataGenerator is shutting down.");
-            
         }
 
         bool data_generation(int batch_size, float resolution)
@@ -118,10 +118,11 @@ namespace cb_data_generator
                 if (status == std::future_status::ready)
                 {
                     auto res = result_future.get();
-                    if(!res->success){
-                    RCLCPP_ERROR(this->get_logger(), "Ik batch failed");
-                    return false;
-                }
+                    if (!res->success)
+                    {
+                        RCLCPP_ERROR(this->get_logger(), "Ik batch failed");
+                        return false;
+                    }
                     joint_states = res->joint_states;
                     joint_states_valid = res->joint_states_valid;
                 }
@@ -130,7 +131,7 @@ namespace cb_data_generator
                     RCLCPP_ERROR(this->get_logger(), "Service call failed");
                     return false;
                 }
-                
+
                 // data_result.reserve(data_result.size() + data.size());
 
                 for (size_t i = 0; i < joint_states.size(); ++i)
@@ -245,8 +246,11 @@ namespace cb_data_generator
                 return;
             }
         }
-
-        void saveToHDF5(const std::vector<std::array<double, 4>> &data, const std::vector<std::array<double, 4>> &voxel_grid, float voxel_size, int (&voxel_grid_sizes)[3], double (&voxel_grid_origin)[3])
+        void saveToHDF5(const std::vector<std::array<double, 4>> &data,
+                        const std::vector<std::array<double, 4>> &voxel_grid,
+                        float voxel_size,
+                        int (&voxel_grid_sizes)[3],
+                        double (&voxel_grid_origin)[3])
         {
             using namespace HighFive;
 
@@ -257,21 +261,30 @@ namespace cb_data_generator
             std::vector<size_t> dims_voxel_grid{voxel_grid_size, 4};
 
             std::string dataset_id_s = std::to_string(this->dataset_id);
-            DataSet dataset_data = this->data_file_->createDataSet<double>("/group/" + dataset_id_s + "/reachability_map", DataSpace(dims));
+
+            // Create the group structure if it does not exist
+            auto group = this->data_file_->createGroup("/group/" + dataset_id_s);
+            // Optionally, you can also create subgroups for voxel_map
+            auto voxel_group = group.createGroup("voxel_map");
+
+            // Now create datasets within these groups
+            DataSet dataset_data = group.createDataSet<double>("reachability_map", DataSpace(dims));
             dataset_data.write(data);
 
-            // save voxel grid origine
-            this->data_file_->createDataSet<double>("/group/" + dataset_id_s + "/voxel_map/origine/x", voxel_grid_origin[0]);
-            this->data_file_->createDataSet<double>("/group/" + dataset_id_s + "/voxel_map/origine/y", voxel_grid_origin[1]);
-            this->data_file_->createDataSet<double>("/group/" + dataset_id_s + "/voxel_map/origine/z", voxel_grid_origin[2]);
+            // Save voxel grid origin as scalar datasets
+            voxel_group.createDataSet<double>("origine_x", DataSpace::From(voxel_grid_origin[0])).write(voxel_grid_origin[0]);
+            voxel_group.createDataSet<double>("origine_y", DataSpace::From(voxel_grid_origin[1])).write(voxel_grid_origin[1]);
+            voxel_group.createDataSet<double>("origine_z", DataSpace::From(voxel_grid_origin[2])).write(voxel_grid_origin[2]);
 
-            this->data_file_->createDataSet("/group/" + dataset_id_s + "/voxel_map/voxel_resolutiion", voxel_size);
-            this->data_file_->createDataSet("/group/" + dataset_id_s + "/voxel_map/voxel_size/x", voxel_grid_sizes[0]);
-            this->data_file_->createDataSet("/group/" + dataset_id_s + "/voxel_map/voxel_size/y", voxel_grid_sizes[1]);
-            this->data_file_->createDataSet("/group/" + dataset_id_s + "/voxel_map/voxel_size/z", voxel_grid_sizes[2]);
+            // Save voxel resolution and size
+            group.createDataSet("voxel_resolution", voxel_size);
+            group.createDataSet("voxel_size_x", voxel_grid_sizes[0]);
+            group.createDataSet("voxel_size_y", voxel_grid_sizes[1]);
+            group.createDataSet("voxel_size_z", voxel_grid_sizes[2]);
 
-            DataSet dataset_voxelgrid = this->data_file_->createDataSet<double>("/group/" + dataset_id_s + "/voxel_map/data", DataSpace(dims_voxel_grid));
+            DataSet dataset_voxelgrid = voxel_group.createDataSet<double>("data", DataSpace(dims_voxel_grid));
             dataset_voxelgrid.write(voxel_grid);
+
             this->dataset_id += 1;
         }
 
