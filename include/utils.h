@@ -24,6 +24,7 @@
         static bool split_data(const std::vector<geometry_msgs::msg::Pose>& data,
                                         size_t batch_size,
                                         std::vector<std::vector<geometry_msgs::msg::Pose>>& batches);
+        static bool saveVecToNpz(const std::string& filename, const std::vector<std::array<double, 4>>& data);
     };
 
 

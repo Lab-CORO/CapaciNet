@@ -125,6 +125,23 @@ bool utils::save_poses_to_file(const std::string& filename, const std::vector<ge
     return true;
 }
 
+bool utils::saveVecToNpz(const std::string& filename, const std::vector<std::array<double, 4>>& data) {
+    std::ofstream file(filename, std::ios::binary);
+    if (!file) {
+        std::cerr << "Failed to open file for writing: " << filename << std::endl;
+        return false;
+    }
+
+    size_t size = data.size();
+    file.write(reinterpret_cast<const char*>(&size), sizeof(size));
+
+    for (const auto& entry : data) {
+        file.write(reinterpret_cast<const char*>(entry.data()), sizeof(double) * 4);
+    }
+
+    return true;
+}
+
 bool utils::load_poses_from_file(const std::string& filename, std::vector<geometry_msgs::msg::Pose>& poses) {
     std::ifstream file(filename, std::ios::binary);
     if (!file) {

@@ -3,6 +3,9 @@
 #include "rclcpp/rclcpp.hpp"
 #include "std_srvs/srv/empty.hpp"
 #include <iostream>
+#include <bits/stdc++.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <fstream>
 #include "json.hpp"
 #include "robot.h"
@@ -39,10 +42,11 @@ namespace cb_data_generator
             std::ostringstream oss;
             oss << std::put_time(&tm, "%d_%m_%Y_%H_%M_%S");
             auto date_str = oss.str();
-            this->data_file_path = ament_index_cpp::get_package_share_directory("data_generation") + "/data/" + date_str + ".h5";
-            this->data_file_ = std::make_shared<HighFive::File>(
-                this->data_file_path,
-                HighFive::File::ReadWrite | HighFive::File::Create);
+            this->data_file_path = ament_index_cpp::get_package_share_directory("data_generation") + "/data/" + date_str ; //+ ".h5";
+            mkdir(this->data_file_path.c_str(), 0777);
+            // this->data_file_ = std::make_shared<HighFive::File>(
+            //     this->data_file_path,
+            //     HighFive::File::ReadWrite | HighFive::File::Create);
 
             client_cb_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
             service_cb_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
@@ -179,8 +183,8 @@ namespace cb_data_generator
 
             start_time = std::chrono::high_resolution_clock::now();
 
-            this->saveToHDF5(data_result, voxel_map, resolution, voxel_grid_sizes, voxel_grid_origin);
-
+            // this->saveToHDF5(data_result, voxel_map, resolution, voxel_grid_sizes, voxel_grid_origin);
+            this->save_data(data_result, voxel_map, resolution, voxel_grid_sizes, voxel_grid_origin);
             // End the timer
             end_time = std::chrono::high_resolution_clock::now();
             // Calculate the elapsed time in milliseconds
@@ -287,6 +291,38 @@ namespace cb_data_generator
 
             this->dataset_id += 1;
         }
+
+        bool save_data(const std::vector<std::array<double, 4>>& reachability_map, 
+                    const std::vector<std::array<double, 4>>& voxel_grid,
+                    float voxel_size,
+                    int (&voxel_grid_sizes)[3],
+                    double (&voxel_grid_origin)[3])
+            {
+            // create a folder name=id in the main folder
+            std::string dataset_id_s = std::to_string(this->dataset_id);
+            std::string file_path =  this->data_file_path + "/"  + dataset_id_s;
+            if(mkdir(file_path.c_str(), 0777) == -1){
+                // ros2 print 
+                RCLCPP_WARN(this->get_logger(), "issue at mkdir of data");
+            }
+
+            // create reachability map data
+            utils::saveVecToNpz(std::string(file_path + "/reachability_map.npz"), reachability_map);
+            // create voxel data
+            utils::saveVecToNpz(std::string(file_path + "/voxel_grid.npz"), voxel_grid);
+            
+            // create info.json
+            json j;
+            j["resolution"] = voxel_size;
+            j["voxel_grid_sizes"] = voxel_grid_sizes;
+            j["voxel_grid_origin"] = voxel_grid_origin;
+            std::ofstream file(file_path + "/info.json");
+            file << j.dump(4);
+            file.close();
+            this->dataset_id += 1;
+            return true;
+        }
+        
 
     private:
         rclcpp::CallbackGroup::SharedPtr client_cb_group_;
