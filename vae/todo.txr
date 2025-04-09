@@ -1,0 +1,7 @@
+
+   11  apt update
+   12  apt install libx11-6
+   13  /opt/conda/bin/python /workspace/capacitynet/format_data.py
+   14  apt install libgl1
+   15  /opt/conda/bin/python /workspace/capacitynet/format_data.py
+   16  history 
