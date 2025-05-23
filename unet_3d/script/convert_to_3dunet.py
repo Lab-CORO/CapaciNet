@@ -8,7 +8,7 @@ import h5py, os, numpy as np, tqdm
 from pathlib import Path
 
 SRC = Path("./data.h5")        # fichier fourni
-DST_DIR = Path("./data/unet3d")        # dossier de sortie
+DST_DIR = Path("../data/unet3d")        # dossier de sortie
 DST_DIR.mkdir(parents=True, exist_ok=True)
 
 with h5py.File(SRC, "r") as src:
@@ -31,6 +31,7 @@ print(f"✔  {len(keys)} fichiers créés dans {DST_DIR.resolve()}")
 
 #### Separe les data de train et de validation ######
 # mkdir -p data/unet3d/{train,val}
+# python - <<'PY'
 # import random, shutil, pathlib
 # root = pathlib.Path("data/unet3d")
 # files = sorted(root.glob("sample_*.h5"))
@@ -39,3 +40,4 @@ print(f"✔  {len(keys)} fichiers créés dans {DST_DIR.resolve()}")
 # for f in files:
 #     dest = root/"val"/f.name if f in val else root/"train"/f.name
 #     shutil.move(f, dest)
+# PY

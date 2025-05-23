@@ -86,7 +86,7 @@ def fill_voxel_map(voxel_map,new_voxel_map):
 
 
 
-dataset = VoxelDataset(root_dir='/workspace/capacitynet/data')
+dataset = VoxelDataset(root_dir='/workspace/CapaciNet/unet_3d/data')
 from torch.utils.data import DataLoader
 dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
 
