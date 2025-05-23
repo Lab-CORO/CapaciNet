@@ -1,6 +1,4 @@
 FROM pytorch/pytorch
 
-conda install -c conda-forge pytorch-3dunet
-
-
-#ENTRYPOINT ["top", "-b"]
+RUN conda install -c conda-forge pytorch-3dunet
+RUN pip install tensorflow
