@@ -143,21 +143,6 @@ Distributed under the **MIT License**. See `LICENSE` for details.
 
 ---
 
-## ✏️ Citation
-
-If you use CapaciNet in academic work, please cite:
-
-```bibtex
-@software{capacinet2025,
-  author  = {Chokre, Ali and Sontia, Thibaut A.},
-  title   = {CapaciNet: 3D‑U‑Net for Robot Reachability},
-  year    = {2025},
-  url     = {https://github.com/Lab-CORO/CapaciNet}
-}
-```
-
----
-
 ## 📧 Contact
 
 For questions, open an [issue](https://github.com/Lab-CORO/CapaciNet/issues) or reach us at **coro‑[dev@etsmtl.ca](mailto:dev@etsmtl.ca)**.
