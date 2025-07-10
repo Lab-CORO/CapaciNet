@@ -74,6 +74,10 @@ namespace cb_data_generator
                                                                                     client_cb_group_);
             while (!client_ik->wait_for_service(std::chrono::seconds(5)))
             {
+                if (!rclcpp::ok()) {
+                    RCLCPP_ERROR(this->get_logger(), "client interrupted while waiting for service to appear.");
+                return ;
+                }
                 RCLCPP_WARN(this->get_logger(), "/client_ik service is not available, retrying...");
             }
             RCLCPP_INFO(this->get_logger(), "/client_ik service is now available.");
