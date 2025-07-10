@@ -42,11 +42,11 @@ namespace cb_data_generator
             std::ostringstream oss;
             oss << std::put_time(&tm, "%d_%m_%Y_%H_%M_%S");
             auto date_str = oss.str();
-            this->data_file_path = ament_index_cpp::get_package_share_directory("data_generation") + "/data/" + date_str ; //+ ".h5";
-            mkdir(this->data_file_path.c_str(), 0777);
-            // this->data_file_ = std::make_shared<HighFive::File>(
-            //     this->data_file_path,
-            //     HighFive::File::ReadWrite | HighFive::File::Create);
+            this->data_file_path = ament_index_cpp::get_package_share_directory("data_generation") + "/data/" + date_str + ".h5";
+            // mkdir(this->data_file_path.c_str(), 0777);
+            this->data_file_ = std::make_shared<HighFive::File>(
+                this->data_file_path,
+                HighFive::File::ReadWrite | HighFive::File::Create);
 
             client_cb_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
             service_cb_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
@@ -187,8 +187,8 @@ namespace cb_data_generator
 
             start_time = std::chrono::high_resolution_clock::now();
 
-            // this->saveToHDF5(data_result, voxel_map, resolution, voxel_grid_sizes, voxel_grid_origin);
-            this->save_data(data_result, voxel_map, resolution, voxel_grid_sizes, voxel_grid_origin);
+            this->saveToHDF5(data_result, voxel_map, resolution, voxel_grid_sizes, voxel_grid_origin);
+            // this->save_data(data_result, voxel_map, resolution, voxel_grid_sizes, voxel_grid_origin);
             // End the timer
             end_time = std::chrono::high_resolution_clock::now();
             // Calculate the elapsed time in milliseconds
@@ -254,7 +254,7 @@ namespace cb_data_generator
                 return;
             }
         }
-        void saveToHDF5(const std::vector<std::array<double, 4>> &data,
+        bool saveToHDF5(const std::vector<std::array<double, 4>> &data,
                         const std::vector<std::array<double, 4>> &voxel_grid,
                         float voxel_size,
                         int (&voxel_grid_sizes)[3],
@@ -294,6 +294,7 @@ namespace cb_data_generator
             dataset_voxelgrid.write(voxel_grid);
 
             this->dataset_id += 1;
+            return true;
         }
 
         bool save_data(const std::vector<std::array<double, 4>>& reachability_map, 
