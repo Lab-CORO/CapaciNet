@@ -267,31 +267,37 @@ namespace cb_data_generator
 
             std::vector<size_t> dims{data_size, 4};
             std::vector<size_t> dims_voxel_grid{voxel_grid_size, 4};
-
             std::string dataset_id_s = std::to_string(this->dataset_id);
 
             // Create the group structure if it does not exist
             auto group = this->data_file_->createGroup("/group/" + dataset_id_s);
-            // Optionally, you can also create subgroups for voxel_map
-            auto voxel_group = group.createGroup("voxel_map");
+            // create voxel map dataset
+            DataSet dataset_voxelgrid = group.createDataSet<double>("voxel_grid", DataSpace(dims_voxel_grid));
+            dataset_voxelgrid.write(voxel_grid);
+            // add voxel map attribut
+            dataset_voxelgrid.createAttribute<double>("origine_x", voxel_grid_origin[0]);
+            dataset_voxelgrid.createAttribute<double>("origine_y", voxel_grid_origin[1]);
+            dataset_voxelgrid.createAttribute<double>("origine_z", voxel_grid_origin[2]);
+            dataset_voxelgrid.createAttribute<double>("voxel_size", voxel_size);
+            dataset_voxelgrid.createAttribute<double>("voxel_grid_size_x", voxel_grid_sizes[0]);
+            dataset_voxelgrid.createAttribute<double>("voxel_grid_size_y", voxel_grid_sizes[1]);
+            dataset_voxelgrid.createAttribute<double>("voxel_grid_size_z", voxel_grid_sizes[2]);
+
 
             // Now create datasets within these groups
             DataSet dataset_data = group.createDataSet<double>("reachability_map", DataSpace(dims));
             dataset_data.write(data);
+            // add voxel map attribut
+            dataset_data.createAttribute<double>("origine_x", voxel_grid_origin[0]);
+            dataset_data.createAttribute<double>("origine_y", voxel_grid_origin[1]);
+            dataset_data.createAttribute<double>("origine_z", voxel_grid_origin[2]);
+            dataset_data.createAttribute<double>("voxel_size", voxel_size);
+            dataset_data.createAttribute<double>("voxel_grid_size_x", voxel_grid_sizes[0]);
+            dataset_data.createAttribute<double>("voxel_grid_size_y", voxel_grid_sizes[1]);
+            dataset_data.createAttribute<double>("voxel_grid_size_z", voxel_grid_sizes[2]);
+            
 
-            // Save voxel grid origin as scalar datasets
-            voxel_group.createDataSet<double>("origine_x", DataSpace::From(voxel_grid_origin[0])).write(voxel_grid_origin[0]);
-            voxel_group.createDataSet<double>("origine_y", DataSpace::From(voxel_grid_origin[1])).write(voxel_grid_origin[1]);
-            voxel_group.createDataSet<double>("origine_z", DataSpace::From(voxel_grid_origin[2])).write(voxel_grid_origin[2]);
 
-            // Save voxel resolution and size
-            group.createDataSet("voxel_resolution", voxel_size);
-            group.createDataSet("voxel_size_x", voxel_grid_sizes[0]);
-            group.createDataSet("voxel_size_y", voxel_grid_sizes[1]);
-            group.createDataSet("voxel_size_z", voxel_grid_sizes[2]);
-
-            DataSet dataset_voxelgrid = voxel_group.createDataSet<double>("data", DataSpace(dims_voxel_grid));
-            dataset_voxelgrid.write(voxel_grid);
 
             this->dataset_id += 1;
             return true;
