@@ -39,7 +39,7 @@ bool Robot::move_joint(joint &j) {
 bool Robot::get_iks(const std::vector<geometry_msgs::msg::Pose> &poses, std::vector<sensor_msgs::msg::JointState> &joint_states, std::vector<std_msgs::msg::Bool> &joint_states_valid){
     // this method call the service ik with the list of all the poses and return the list of all the joint
     // call the sevice /curobo/ik_poses
-    rclcpp::Client<curobo_msgs::srv::Ik>::SharedPtr client = node_->create_client<curobo_msgs::srv::Ik>("/curobo/ik_poses");
+    rclcpp::Client<curobo_msgs::srv::IkBatch>::SharedPtr client = node_->create_client<curobo_msgs::srv::IkBatch>("/curobo/ik_batch_poses");
 
     auto request = std::make_shared<curobo_msgs::srv::Ik::Request>();
 

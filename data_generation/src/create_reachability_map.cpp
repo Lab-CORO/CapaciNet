@@ -78,7 +78,7 @@ int main(int argc, char **argv)
     rclcpp::init(argc, argv);
     auto node = rclcpp::Node::make_shared("workspace");
 
-    rclcpp::Client<curobo_msgs::srv::Ik>::SharedPtr client_ik = node->create_client<curobo_msgs::srv::Ik>("/curobo_ik/ik_batch_poses", rmw_qos_profile_services_default);
+    rclcpp::Client<curobo_msgs::srv::IkBatch>::SharedPtr client_ik = node->create_client<curobo_msgs::srv::IkBatch>("/curobo_ik/ik_batch_poses", rmw_qos_profile_services_default);
     // wait for the service up
     while (!client_ik->wait_for_service(5s))
     {
@@ -174,7 +174,7 @@ int main(int argc, char **argv)
         std::vector<sensor_msgs::msg::JointState> joint_states;
         std::vector<std_msgs::msg::Bool> joint_states_valid;
 
-        auto request = std::make_shared<curobo_msgs::srv::Ik::Request>();
+        auto request = std::make_shared<curobo_msgs::srv::IkBatch::Request>();
 
         request->poses = poses;
         auto result_future = client_ik->async_send_request(request);

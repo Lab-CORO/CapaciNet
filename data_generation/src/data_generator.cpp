@@ -3,6 +3,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "std_srvs/srv/empty.hpp"
 #include <iostream>
+#include <math.h>
 #include <bits/stdc++.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -68,7 +69,7 @@ namespace cb_data_generator
                 rmw_qos_profile_services_default,
                 service_cb_group_);
 
-            client_ik = this->create_client<curobo_msgs::srv::Ik>("/curobo_ik/ik_batch_poses", rmw_qos_profile_services_default,
+            client_ik = this->create_client<curobo_msgs::srv::IkBatch>("/curobo_ik/ik_batch_poses", rmw_qos_profile_services_default,
                                                                   client_cb_group_);
             client_voxel_grid = this->create_client<curobo_msgs::srv::GetVoxelGrid>("/curobo_ik/get_voxel_grid", rmw_qos_profile_services_default,
                                                                                     client_cb_group_);
@@ -99,7 +100,7 @@ namespace cb_data_generator
             std::stringstream resolution_string;
             resolution_string << resolution;              // appending the float value to the streamclass
             std::string result = resolution_string.str(); // converting the float value to string
-
+            // TODO need to set the reachability map as an "octomap" in hdf5.
             utils::load_poses_from_file(ament_index_cpp::get_package_share_directory("data_generation") + "/data" + "/master_ik_data" + result + ".npz", data);
             // split data into batches
             std::vector<std::vector<geometry_msgs::msg::Pose>> batches;
@@ -117,7 +118,7 @@ namespace cb_data_generator
                 std::vector<sensor_msgs::msg::JointState> joint_states;
                 std::vector<std_msgs::msg::Bool> joint_states_valid;
 
-                auto request = std::make_shared<curobo_msgs::srv::Ik::Request>();
+                auto request = std::make_shared<curobo_msgs::srv::IkBatch::Request>();
 
                 request->poses = batch;
                 auto result_future = client_ik->async_send_request(request);
@@ -262,18 +263,56 @@ namespace cb_data_generator
         {
             using namespace HighFive;
 
-            size_t data_size = data.size();
-            size_t voxel_grid_size = voxel_grid.size();
+            // size_t data_size = data.size();
+            // size_t voxel_grid_size = voxel_grid.size();
 
-            std::vector<size_t> dims{data_size, 4};
-            std::vector<size_t> dims_voxel_grid{voxel_grid_size, 4};
+            // std::vector<size_t> dims{data_size, 4};
+            
+            vector<vector<vector<double>>> voxel_grid_data(voxel_grid_sizes[0], 
+                                            vector<vector<double>>(voxel_grid_sizes[1], 
+                                            vector<double>(voxel_grid_sizes[2], 
+                                            1.0))); // initial value is 1.0 (means free voxel)
+            
+            // 
+            double resolution = 0.08;
+            double origine = -1.5;
+            double max_size = 1.5;
+
+            double rm_size = round(max_size * 2 / resolution);
+            
+            for (size_t idx = 0; idx < voxel_grid.size(); ++idx) {
+            // for(auto it=voxel_grid.begin(); it!=voxel_grid.end(); ++it){
+                // int index = std::distance(voxel_grid.begin(), it);
+                size_t x = idx / (voxel_grid_sizes[1] * voxel_grid_sizes[2]);
+                size_t y = (idx / voxel_grid_sizes[2]) % voxel_grid_sizes[1];
+                size_t z = idx % voxel_grid_sizes[2];
+                voxel_grid_data[x][y][z] = 1 - voxel_grid[idx][3];
+                // rm_data[x][y][z] = data[idx][3];
+            }
+
+            // create a rm map with only 0
+            vector<vector<vector<double>>> rm_data(rm_size, 
+                                            vector<vector<double>>(rm_size, 
+                                            vector<double>(rm_size, 
+                                            0.0))); // initial value is 0 (means no reach)
+            for(const std::array<double, 4>& pose : data) {
+                int idx = (int)(((round(pose[0] * 100)/100) - origine) / resolution);
+                int idy = (int)(((round(pose[1] * 100)/100) - origine) / resolution);
+                int idz = (int)(((round(pose[2] * 100)/100) - origine) / resolution);
+                rm_data[idx][idy][idz] = pose[3];
+                 RCLCPP_WARN(this->get_logger(), "x: %i, y:%i, z:%i, Data:%f", idx, idy, idz, pose[3]);
+            }
+
+
+
             std::string dataset_id_s = std::to_string(this->dataset_id);
 
             // Create the group structure if it does not exist
             auto group = this->data_file_->createGroup("/group/" + dataset_id_s);
             // create voxel map dataset
+            std::vector<size_t> dims_voxel_grid{(size_t)voxel_grid_sizes[0], (size_t)voxel_grid_sizes[1], (size_t)voxel_grid_sizes[2]};
             DataSet dataset_voxelgrid = group.createDataSet<double>("voxel_grid", DataSpace(dims_voxel_grid));
-            dataset_voxelgrid.write(voxel_grid);
+            dataset_voxelgrid.write(voxel_grid_data);
             // add voxel map attribut
             dataset_voxelgrid.createAttribute<double>("origine_x", voxel_grid_origin[0]);
             dataset_voxelgrid.createAttribute<double>("origine_y", voxel_grid_origin[1]);
@@ -285,16 +324,17 @@ namespace cb_data_generator
 
 
             // Now create datasets within these groups
-            DataSet dataset_data = group.createDataSet<double>("reachability_map", DataSpace(dims));
-            dataset_data.write(data);
+            std::vector<size_t> dims_rm_grid{(size_t)rm_size, (size_t)rm_size, (size_t)rm_size};
+            DataSet dataset_data = group.createDataSet<double>("reachability_map", DataSpace(dims_rm_grid));
+            dataset_data.write(rm_data);
             // add voxel map attribut
-            dataset_data.createAttribute<double>("origine_x", voxel_grid_origin[0]);
-            dataset_data.createAttribute<double>("origine_y", voxel_grid_origin[1]);
-            dataset_data.createAttribute<double>("origine_z", voxel_grid_origin[2]);
-            dataset_data.createAttribute<double>("voxel_size", voxel_size);
-            dataset_data.createAttribute<double>("voxel_grid_size_x", voxel_grid_sizes[0]);
-            dataset_data.createAttribute<double>("voxel_grid_size_y", voxel_grid_sizes[1]);
-            dataset_data.createAttribute<double>("voxel_grid_size_z", voxel_grid_sizes[2]);
+            dataset_data.createAttribute<double>("origine_x", origine);
+            dataset_data.createAttribute<double>("origine_y", origine);
+            dataset_data.createAttribute<double>("origine_z", origine);
+            dataset_data.createAttribute<double>("voxel_size", resolution);
+            dataset_data.createAttribute<double>("voxel_grid_size_x", rm_size);
+            dataset_data.createAttribute<double>("voxel_grid_size_y", rm_size);
+            dataset_data.createAttribute<double>("voxel_grid_size_z", rm_size);
             
 
 
@@ -343,7 +383,7 @@ namespace cb_data_generator
         rclcpp::Client<std_srvs::srv::Empty>::SharedPtr client_ptr_;
         rclcpp::TimerBase::SharedPtr timer_ptr_;
         rclcpp::Service<curobo_msgs::srv::GenerateRM>::SharedPtr service_;
-        rclcpp::Client<curobo_msgs::srv::Ik>::SharedPtr client_ik;
+        rclcpp::Client<curobo_msgs::srv::IkBatch>::SharedPtr client_ik;
         rclcpp::Client<curobo_msgs::srv::GetVoxelGrid>::SharedPtr client_voxel_grid;
 
         std::shared_ptr<HighFive::File> data_file_;

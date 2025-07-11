@@ -7,7 +7,7 @@
 
 
 #include <Eigen/Dense>
-#include "curobo_msgs/srv/ik.hpp"
+#include "curobo_msgs/srv/ik_batch.hpp"
 #include "master_ik_data.h"
 
 class Robot {

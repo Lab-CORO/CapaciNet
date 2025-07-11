@@ -54,8 +54,8 @@ add_executable(create_reachability_map
         src/master_ik_data.cpp
         include/master_ik_data.h
         include/json.hpp
-        include/robot.h
-        src/robot.cpp
+        # include/robot.h
+        # src/robot.cpp
         include/utils.h
         src/utils.cpp
 
@@ -74,8 +74,8 @@ add_executable(generate_data
         src/master_ik_data.cpp
         include/master_ik_data.h
         include/json.hpp
-        include/robot.h
-        src/robot.cpp
+        # include/robot.h
+        # src/robot.cpp
         include/utils.h
         src/utils.cpp
 
@@ -109,8 +109,8 @@ add_executable(reachability_map_viz
         src/master_ik_data.cpp
         include/master_ik_data.h
         include/json.hpp
-        include/robot.h
-        src/robot.cpp
+        # include/robot.h
+        # src/robot.cpp
         include/utils.h
         src/utils.cpp
 

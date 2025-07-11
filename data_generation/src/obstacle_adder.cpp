@@ -84,6 +84,10 @@ bool ObstacleAdder::is_in_forbidden_zone()
 
 bool ObstacleAdder::add_random_cubes(int nb_object, float max_reach)
 {
+    if(nb_object == 0){
+        RCLCPP_INFO(this->get_logger(), "No obstacle to genrate.");
+        return false;
+    }
     // Définir les distributions
     this->num_cubes_dist_ = std::uniform_int_distribution<int>(3, nb_object);        // Nombre de cubes entre 1 et 10
     this->position_dist_ = std::uniform_real_distribution<double>(-max_reach, max_reach); // Positions entre -2 et 2
