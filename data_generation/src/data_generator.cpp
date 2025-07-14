@@ -44,10 +44,7 @@ namespace cb_data_generator
             oss << std::put_time(&tm, "%d_%m_%Y_%H_%M_%S");
             auto date_str = oss.str();
             this->data_file_path = ament_index_cpp::get_package_share_directory("data_generation") + "/data/" + date_str + ".h5";
-            // mkdir(this->data_file_path.c_str(), 0777);
-            this->data_file_ = std::make_shared<HighFive::File>(
-                this->data_file_path,
-                HighFive::File::ReadWrite | HighFive::File::Create);
+
 
             client_cb_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
             service_cb_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
@@ -92,7 +89,9 @@ namespace cb_data_generator
 
         bool data_generation(int batch_size, float resolution)
         {
-
+            this->data_file_ = std::make_shared<HighFive::File>(
+                this->data_file_path,
+                HighFive::File::ReadWrite | HighFive::File::Create);
             auto start_time = std::chrono::high_resolution_clock::now();
 
             std::vector<geometry_msgs::msg::Pose> data;
@@ -110,8 +109,6 @@ namespace cb_data_generator
                 this->map_rm[pt] = 0.0;
             }
 
-            // TODO need to set the reachability map as an "octomap" in hdf5.
-            // utils::load_poses_from_file(ament_index_cpp::get_package_share_directory("data_generation") + "/data" + "/master_ik_data" + result + ".npz", data);
             // split data into batches
             std::vector<std::vector<geometry_msgs::msg::Pose>> batches;
 
@@ -164,43 +161,8 @@ namespace cb_data_generator
                     if (joint_states_valid[i].data)
                     {
                         this->map_rm[pt] += 1.0 / 50.0;
-                        //   RCLCPP_ERROR(this->get_logger(), "x: %f, y: %f z: %f, thete_x %f theta_y %f theta_z %f theta_w %f",
-                        //                                 round(batch[i].position.x*100)/100, 
-                        //                                 round(batch[i].position.y*100)/100, 
-                        //                                 round(batch[i].position.z*100)/100, 
-                        //                                 batch[i].orientation.x,
-                        //                                 batch[i].orientation.y,
-                        //                                 batch[i].orientation.z,
-                        //                                 batch[i].orientation.w );
                     }
-                    // else{
-                    //     RCLCPP_ERROR(this->get_logger(), "x: %f, y: %f z: %f, thete_x %f theta_y %f theta_z %f theta_w %f",
-                    //                                     round(batch[i].position.x*100)/100, 
-                    //                                     round(batch[i].position.y*100)/100, 
-                    //                                     round(batch[i].position.z*100)/100, 
-                    //                                     batch[i].orientation.x,
-                    //                                     batch[i].orientation.y,
-                    //                                     batch[i].orientation.z,
-                    //                                     batch[i].orientation.w );
-                    // }
-
-                    // // inline distance check
-                    // double dx = batch[i].position.x - sphere[0];
-                    // double dy = batch[i].position.y - sphere[1];
-                    // double dz = batch[i].position.z - sphere[2];
-                    // double dist_sq = dx * dx + dy * dy + dz * dz;
-                    // if (dist_sq > (pow(0.001, 2)))
-                    // { // epsilon^2
-                    //     data_result.push_back({sphere[0], sphere[1], sphere[2], sphere[3]});
-                    //     sphere[0] = batch[i].position.x;
-                    //     sphere[1] = batch[i].position.y;
-                    //     sphere[2] = batch[i].position.z;
-                    //     sphere[3] = 0.0;
-                    // }
-                    // if (joint_states_valid[i].data)
-                    // {
-                    //     sphere[3] += 1.0 / 50.0;
-                    // }
+                 
                 }
             }
 
@@ -228,7 +190,6 @@ namespace cb_data_generator
             start_time = std::chrono::high_resolution_clock::now();
 
             this->saveToHDF5(this->map_rm, voxel_map, resolution, voxel_grid_sizes, voxel_grid_origin);
-            // this->save_data(data_result, voxel_map, resolution, voxel_grid_sizes, voxel_grid_origin);
             // End the timer
             end_time = std::chrono::high_resolution_clock::now();
             // Calculate the elapsed time in milliseconds
@@ -236,6 +197,9 @@ namespace cb_data_generator
             RCLCPP_INFO(this->get_logger(), "Save hdf5 time: %ld ms", duration);
 
             RCLCPP_INFO(this->get_logger(), "Reachability generated !");
+            
+            this->data_file_->flush();
+
             return true;
         }
 
