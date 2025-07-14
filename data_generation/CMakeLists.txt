@@ -116,7 +116,13 @@ add_executable(reachability_map_viz
 
 )
 target_include_directories(reachability_map_viz PUBLIC ${OCTOMAP_INCLUDE_DIRS})
-target_link_libraries(reachability_map_viz ${OCTOMAP_LIBRARIES})
+target_link_libraries(reachability_map_viz 
+  ${OCTOMAP_LIBRARIES}   
+  ${rclcpp_LIBRARIES}
+  ${HDF5_LIBRARIES}
+  ${HighFive_LIBRARIES}
+  )
+
 ament_target_dependencies(reachability_map_viz rclcpp geometry_msgs visualization_msgs curobo_msgs tf2_geometry_msgs pcl_ros Eigen3)
 
 # Add executable for scene manager

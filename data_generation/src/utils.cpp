@@ -20,67 +20,29 @@ double utils::round_to_decimals(double value, int decimals) {
 }
 
 
-// void utils::save_vector2d_to_file(const std::string& filename, const std::vector<std::vector<double>>& data) {
-//     std::ofstream file(filename, std::ios::binary);
-//     if (!file) {
-//         std::cerr << "Failed to open file for writing: " << filename << std::endl;
-//         return;
-//     }
-//
-//     size_t rows = data.size();
-//     size_t cols = rows > 0 ? data[0].size() : 0;
-//     file.write(reinterpret_cast<const char*>(&rows), sizeof(rows));
-//     file.write(reinterpret_cast<const char*>(&cols), sizeof(cols));
-//
-//     for (const auto& row : data) {
-//         file.write(reinterpret_cast<const char*>(row.data()), cols * sizeof(double));
-//     }
-// }
-
-// bool utils::load_vector2d_from_file(const std::string& filename, std::vector<std::vector<double>>& data) {
-//     std::ifstream file(filename, std::ios::binary);
-//     if (!file) {
-//         std::cerr << "Failed to open file for reading: " << filename << std::endl;
-//         return false;
-//     }
-//
-//     size_t rows, cols;
-//     file.read(reinterpret_cast<char*>(&rows), sizeof(rows));
-//     file.read(reinterpret_cast<char*>(&cols), sizeof(cols));
-//
-//     data.resize(rows, std::vector<double>(cols));
-//     for (auto& row : data) {
-//         file.read(reinterpret_cast<char*>(row.data()), cols * sizeof(double));
-//     }
-//
-//     return true;
-// }
-//
-
-
-bool utils::split_data(const std::vector<geometry_msgs::msg::Pose>& data, size_t batch_size, std::vector<std::vector<geometry_msgs::msg::Pose>>& batches) {
-    if (batch_size == 0) {
+bool utils::split_data(const std::vector<geometry_msgs::msg::Pose>& data, size_t max_batch_size, std::vector<std::vector<geometry_msgs::msg::Pose>>& batches) {
+    if (max_batch_size == 0) {
         std::cerr << "Batch size must be greater than 0." << std::endl;
         return false;
     }
 
-    // get the highest divider with a limit (batch_size)
-    size_t total_size = data.size();
-    int maxDivider = 1;
-    for (int i = total_size / 2; i >= 1; --i) { // Vérifie les diviseurs à partir de la moitié de n
-        if (total_size % i == 0 && i <= batch_size) {
-            maxDivider = i;
-            break; 
+
+
+    size_t batch_size = 1;
+    for (size_t size = max_batch_size; size >= 1; size--){
+        double reste =  std::size(data) % size;
+        if (reste == 0){
+            batch_size = size;
+            // printf("found: %i \n", num_batches );
+            break;
         }
     }
-    
-
-    size_t num_batches = maxDivider;
+    size_t num_batches = std::size(data) / batch_size;
 
     batches.clear();
     for (size_t i = 0; i < num_batches; ++i) {
         size_t start_idx = i * batch_size;
-        size_t end_idx = std::min(start_idx + batch_size, total_size);
+        size_t end_idx = std::min(start_idx + batch_size, std::size(data));
         std::vector<geometry_msgs::msg::Pose> batch(data.begin() + start_idx, data.begin() + end_idx);
         batches.push_back(batch);
     }
@@ -88,20 +50,6 @@ bool utils::split_data(const std::vector<geometry_msgs::msg::Pose>& data, size_t
     return true;
 }
 
-// std::vector<std::vector<std::vector<double>>> utils::split_data(const std::vector<std::vector<double>>& data, size_t batch_size) {
-//     std::vector<std::vector<std::vector<double>>> batches;
-//     size_t total_size = data.size();
-//     size_t num_batches = std::ceil(static_cast<double>(total_size) / batch_size);
-//
-//     for (size_t i = 0; i < num_batches; ++i) {
-//         size_t start_idx = i * batch_size;
-//         size_t end_idx = std::min(start_idx + batch_size, total_size);
-//         std::vector<std::vector<double>> batch(data.begin() + start_idx, data.begin() + end_idx);
-//         batches.push_back(batch);
-//     }
-//
-//     return batches;
-// }
 
 bool utils::save_poses_to_file(const std::string& filename, const std::vector<geometry_msgs::msg::Pose>& poses) {
     std::ofstream file(filename, std::ios::binary);

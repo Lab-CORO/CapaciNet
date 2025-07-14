@@ -25,9 +25,9 @@ def generate_launch_description():
         executable='curobo_ik',
         name='curobo_ik',
         output='screen',
-        parameters=[
-                {"voxel_size": voxel_size}
-            ]
+        # parameters=[
+        #         {"voxel_size": voxel_size}
+        #     ]
     )
 
     # Node data_gen create reachability map
@@ -36,13 +36,31 @@ def generate_launch_description():
         executable='create_reachability_map',
         name='create_reachability_map',
         output='screen',
-        parameters=[
-                {"voxel_size": voxel_size,}
-        ],
+        # parameters=[
+        #         {"voxel_size": voxel_size,}
+        # ],
         
     )
 
     return LaunchDescription([
-        ik_node, 
-        create_reachability_map
+        voxel_size_arg,
+        # ik_node, 
+        Node(
+            package='curobo_ros',
+            executable='curobo_ik',
+            name='curobo_ik',
+            output='screen',
+            parameters=[
+                    {"voxel_size": voxel_size}
+                ]
+        ),
+        # create_reachability_map
+        Node(
+        package='data_generation',
+        executable='create_reachability_map',
+        name='create_reachability_map',
+        output='screen',
+        parameters=[
+                {"voxel_size": voxel_size,}
+        ])
         ])

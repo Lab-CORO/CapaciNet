@@ -100,18 +100,31 @@ namespace cb_data_generator
             std::stringstream resolution_string;
             resolution_string << resolution;              // appending the float value to the streamclass
             std::string result = resolution_string.str(); // converting the float value to string
+
+            // Create a dict as rm to store scores
+            // for loop to get all raw_data and set it as a map (dict)
+            utils::load_poses_from_file(ament_index_cpp::get_package_share_directory("data_generation") + "/data" + "/master_ik_data" + result + ".npz", this->raw_datas);
+            for (const auto& data_pt : this->raw_datas) {
+                // on prend le risque de la dedondance mais au piure on fera un round sur les coords x y z
+                std::vector<double> pt = {round(data_pt.position.x*100)/100, round(data_pt.position.y *100)/100, round(data_pt.position.z*100)/100};
+                this->map_rm[pt] = 0.0;
+            }
+
             // TODO need to set the reachability map as an "octomap" in hdf5.
-            utils::load_poses_from_file(ament_index_cpp::get_package_share_directory("data_generation") + "/data" + "/master_ik_data" + result + ".npz", data);
+            // utils::load_poses_from_file(ament_index_cpp::get_package_share_directory("data_generation") + "/data" + "/master_ik_data" + result + ".npz", data);
             // split data into batches
             std::vector<std::vector<geometry_msgs::msg::Pose>> batches;
-            utils::split_data(data, batch_size, batches);
 
+            utils::split_data(this->raw_datas, batch_size, batches);
+            // print batch size
+            RCLCPP_WARN(this->get_logger(), "Batch size: %i", batches.size());
+            RCLCPP_WARN(this->get_logger(), "Data size: %i", this->raw_datas.size());
             // iterate all batches
 
-            std::vector<std::array<double, 4>> data_result;
-            data_result.reserve(data.size());
+            // std::vector<std::array<double, 4>> data_result;
+            // data_result.reserve(this->raw_datas.size());
 
-            double sphere[4] = {data[0].position.x, data[0].position.y, data[0].position.z, 0.0};
+            double sphere[4] = {this->raw_datas[0].position.x, this->raw_datas[0].position.y, this->raw_datas[0].position.z, 0.0};
             for (const auto &batch : batches)
             {
                 // send the batch to robot ik
@@ -145,23 +158,49 @@ namespace cb_data_generator
 
                 for (size_t i = 0; i < joint_states.size(); ++i)
                 {
-                    // inline distance check
-                    double dx = batch[i].position.x - sphere[0];
-                    double dy = batch[i].position.y - sphere[1];
-                    double dz = batch[i].position.z - sphere[2];
-                    double dist_sq = dx * dx + dy * dy + dz * dz;
-                    if (dist_sq > (pow(0.001, 2)))
-                    { // epsilon^2
-                        data_result.push_back({sphere[0], sphere[1], sphere[2], sphere[3]});
-                        sphere[0] = batch[i].position.x;
-                        sphere[1] = batch[i].position.y;
-                        sphere[2] = batch[i].position.z;
-                        sphere[3] = 0.0;
-                    }
+                    // get the x, y, z and if joint state valide, add 1 to score 
+                    std::vector<double> pt = {round(batch[i].position.x*100)/100, round(batch[i].position.y*100)/100, round(batch[i].position.z*100)/100};
+                    
                     if (joint_states_valid[i].data)
                     {
-                        sphere[3] += 1.0 / 50.0;
+                        this->map_rm[pt] += 1.0 / 50.0;
+                        //   RCLCPP_ERROR(this->get_logger(), "x: %f, y: %f z: %f, thete_x %f theta_y %f theta_z %f theta_w %f",
+                        //                                 round(batch[i].position.x*100)/100, 
+                        //                                 round(batch[i].position.y*100)/100, 
+                        //                                 round(batch[i].position.z*100)/100, 
+                        //                                 batch[i].orientation.x,
+                        //                                 batch[i].orientation.y,
+                        //                                 batch[i].orientation.z,
+                        //                                 batch[i].orientation.w );
                     }
+                    // else{
+                    //     RCLCPP_ERROR(this->get_logger(), "x: %f, y: %f z: %f, thete_x %f theta_y %f theta_z %f theta_w %f",
+                    //                                     round(batch[i].position.x*100)/100, 
+                    //                                     round(batch[i].position.y*100)/100, 
+                    //                                     round(batch[i].position.z*100)/100, 
+                    //                                     batch[i].orientation.x,
+                    //                                     batch[i].orientation.y,
+                    //                                     batch[i].orientation.z,
+                    //                                     batch[i].orientation.w );
+                    // }
+
+                    // // inline distance check
+                    // double dx = batch[i].position.x - sphere[0];
+                    // double dy = batch[i].position.y - sphere[1];
+                    // double dz = batch[i].position.z - sphere[2];
+                    // double dist_sq = dx * dx + dy * dy + dz * dz;
+                    // if (dist_sq > (pow(0.001, 2)))
+                    // { // epsilon^2
+                    //     data_result.push_back({sphere[0], sphere[1], sphere[2], sphere[3]});
+                    //     sphere[0] = batch[i].position.x;
+                    //     sphere[1] = batch[i].position.y;
+                    //     sphere[2] = batch[i].position.z;
+                    //     sphere[3] = 0.0;
+                    // }
+                    // if (joint_states_valid[i].data)
+                    // {
+                    //     sphere[3] += 1.0 / 50.0;
+                    // }
                 }
             }
 
@@ -188,7 +227,7 @@ namespace cb_data_generator
 
             start_time = std::chrono::high_resolution_clock::now();
 
-            this->saveToHDF5(data_result, voxel_map, resolution, voxel_grid_sizes, voxel_grid_origin);
+            this->saveToHDF5(this->map_rm, voxel_map, resolution, voxel_grid_sizes, voxel_grid_origin);
             // this->save_data(data_result, voxel_map, resolution, voxel_grid_sizes, voxel_grid_origin);
             // End the timer
             end_time = std::chrono::high_resolution_clock::now();
@@ -255,7 +294,7 @@ namespace cb_data_generator
                 return;
             }
         }
-        bool saveToHDF5(const std::vector<std::array<double, 4>> &data,
+        bool saveToHDF5(const std::map<std::vector<double>, double> &data,
                         const std::vector<std::array<double, 4>> &voxel_grid,
                         float voxel_size,
                         int (&voxel_grid_sizes)[3],
@@ -295,14 +334,13 @@ namespace cb_data_generator
                                             vector<vector<double>>(rm_size, 
                                             vector<double>(rm_size, 
                                             0.0))); // initial value is 0 (means no reach)
-            for(const std::array<double, 4>& pose : data) {
-                int idx = (int)(((round(pose[0] * 100)/100) - origine) / resolution);
-                int idy = (int)(((round(pose[1] * 100)/100) - origine) / resolution);
-                int idz = (int)(((round(pose[2] * 100)/100) - origine) / resolution);
-                rm_data[idx][idy][idz] = pose[3];
-                 RCLCPP_WARN(this->get_logger(), "x: %i, y:%i, z:%i, Data:%f", idx, idy, idz, pose[3]);
+            for(const auto &pose : data) {
+                int idx = static_cast<int> (round  (((round(pose.first[0] * 100)/100) - origine) / resolution));
+                int idy = static_cast<int> (round  (((round(pose.first[1] * 100)/100) - origine) / resolution));
+                int idz = static_cast<int> (round  (((round(pose.first[2] * 100)/100) - origine) / resolution));
+                rm_data[idx][idy][idz] = pose.second;
+                //  RCLCPP_WARN(this->get_logger(), "x: %i, y:%i, z:%i, Data:%f", idx, idy, idz, pose.second);
             }
-
 
 
             std::string dataset_id_s = std::to_string(this->dataset_id);
@@ -389,6 +427,8 @@ namespace cb_data_generator
         std::shared_ptr<HighFive::File> data_file_;
         std::string data_file_path;
         int dataset_id;
+        std::map<std::vector<double>, double> map_rm;
+        std::vector<geometry_msgs::msg::Pose>raw_datas;
     };
 }
 

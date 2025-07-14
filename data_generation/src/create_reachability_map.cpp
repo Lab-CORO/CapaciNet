@@ -94,7 +94,7 @@ int main(int argc, char **argv)
     rclcpp::Time startit = node->get_clock()->now();
 
     float voxel_size = 0;
-    node->declare_parameter("voxel_size", 0.5);
+    node->declare_parameter("voxel_size", 0.08);
     node->get_parameter("voxel_size", voxel_size);
     float resolution = voxel_size;
 
@@ -199,45 +199,45 @@ int main(int argc, char **argv)
 
                 poses_vector2save.push_back(poses[j]);
 
-                // create a pose in the sphere
-                PoseOnSphere p;
-                p.x = sphere.x;
-                p.y = sphere.y;
-                p.z = sphere.z;
-                p.theta_x = utils::round_to_decimals(poses[j].orientation.x, 6);
-                p.theta_y = utils::round_to_decimals(poses[j].orientation.y, 6);
-                p.theta_z = utils::round_to_decimals(poses[j].orientation.z, 6);
-                p.theta_w = utils::round_to_decimals(poses[j].orientation.w, 6);
-                // if joint[i] is not empty add the joints to the pose
+                // // create a pose in the sphere
+                // PoseOnSphere p;
+                // p.x = sphere.x;
+                // p.y = sphere.y;
+                // p.z = sphere.z;
+                // p.theta_x = utils::round_to_decimals(poses[j].orientation.x, 6);
+                // p.theta_y = utils::round_to_decimals(poses[j].orientation.y, 6);
+                // p.theta_z = utils::round_to_decimals(poses[j].orientation.z, 6);
+                // p.theta_w = utils::round_to_decimals(poses[j].orientation.w, 6);
+                // // if joint[i] is not empty add the joints to the pose
 
-                // create a joint
-                joint join;
-                join.j1 = joint_states[j].position[0];
-                join.j2 = joint_states[j].position[1];
-                join.j3 = joint_states[j].position[2];
-                join.j4 = joint_states[j].position[3];
-                join.j5 = joint_states[j].position[4];
-                join.j6 = joint_states[j].position[5];
-                // add the joint to the pose
-                std::vector<joint> joints = {join};
-                p.add(joints);
-                // add the pose to the sphere
-                sphere.add(p);
+                // // create a joint
+                // joint join;
+                // join.j1 = joint_states[j].position[0];
+                // join.j2 = joint_states[j].position[1];
+                // join.j3 = joint_states[j].position[2];
+                // join.j4 = joint_states[j].position[3];
+                // join.j5 = joint_states[j].position[4];
+                // join.j6 = joint_states[j].position[5];
+                // // add the joint to the pose
+                // std::vector<joint> joints = {join};
+                // p.add(joints);
+                // // add the pose to the sphere
+                // sphere.add(p);
             }
         }
-        //  add the sphere to the master_ik
-        if (sphere.has_points())
-        {
-            data_ik.add(sphere);
-        }
+        // //  add the sphere to the master_ik
+        // if (sphere.has_points())
+        // {
+        //     data_ik.add(sphere);
+        // }
     }
 
     // save vector to cnpy to the data file in data_generation ros package
     std::stringstream resolution_string;
     resolution_string << resolution;              // appending the float value to the streamclass
     std::string result = resolution_string.str(); // converting the float value to string
-    utils::save_poses_to_file(std::string("/home/ros2_ws/src/capacitynet") + "/data" + "/master_ik_data" + result + ".npz", poses_vector2save);
-    data_ik.write_data(std::string("/home/ros2_ws/src/capacitynet")+ "/data"  + "/master_ik_data" + result + ".json");
+    utils::save_poses_to_file(std::string("/home/ros2_ws/src/") +  "/master_ik_data" + result + ".npz", poses_vector2save);
+    // data_ik.write_data(std::string("/home/ros2_ws/src/capacitynet")+ "/data"  + "/master_ik_data" + result + ".json");
         // ament_index_cpp::get_package_share_directory("data_generation") + "/data"  + "/master_ik_data" + result + ".json");
     // get time
     rclcpp::Time end = node->get_clock()->now();
