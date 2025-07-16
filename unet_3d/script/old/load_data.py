@@ -16,6 +16,7 @@ class VoxelDataset(Dataset):
         self.root_dir = root_dir
         self.transform = transform
         self.sample_paths = []
+        info_json = []
 
         # Iterate over each session directory (e.g. "10_03_2025_21_57_30", etc.)
         for session in os.listdir(root_dir):
@@ -35,7 +36,9 @@ class VoxelDataset(Dataset):
             # Read the first 8 bytes for the record count (assuming 64-bit size_t)
             size_array = np.frombuffer(f.read(8), dtype=np.uint64)
             if size_array.size < 1:
+                print(filename)
                 raise ValueError("Failed to read the number of records.")
+
             num_records = int(size_array[0])
 
             # Read the remaining bytes as double precision floats.
@@ -44,6 +47,8 @@ class VoxelDataset(Dataset):
 
             expected_doubles = num_records * 4
             if data.size != expected_doubles:
+                print(filename)
+
                 raise ValueError(f"Data size mismatch: expected {expected_doubles} doubles, got {data.size}.")
 
             # Reshape the flat array into a 2D array with 4 columns.
@@ -62,8 +67,10 @@ class VoxelDataset(Dataset):
         # Load the info.json file
         info_file = os.path.join(sample_path, 'info.json')
         with open(info_file, 'r') as f:
+            # print(info_file)
             info = json.load(f)
-
+            self.info_json = info
+            
         # Load the reachability_map.npz file
         reachability_file = os.path.join(sample_path, 'reachability_map.npz')
         reachability_map = self.load_data(reachability_file)

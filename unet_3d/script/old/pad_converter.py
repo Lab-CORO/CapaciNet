@@ -12,7 +12,7 @@ import h5py, numpy as np, pathlib, shutil, argparse
 # ---------------------------------------------------------------------
 TARGET_SHAPE = (130, 130, 130)                     # (Z, Y, X)
 INPUT_ROOT   = pathlib.Path(
-    "/workspace/capacitynet/unet_3d/data/unet3d") # train & val dessous
+    "/workspace/capacitynet/data/unet3d") # train & val dessous
 OUTPUT_ROOT  = INPUT_ROOT.with_name(INPUT_ROOT.name + "_padded")
 # ---------------------------------------------------------------------
 

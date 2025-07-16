@@ -15,59 +15,17 @@
 # If you want to build a isaac sim docker, run this script with `bash build_dev_docker.sh isaac`
 
 # Check architecture to build:
-
 image_tag="x86"
-isaac_sim_version=""
-input_arg="$1"
 
-if [ -z "$input_arg" ]; then
-    arch=$(uname -m)
-    echo "Argument empty, trying to build based on architecture"
-    if [ "$arch" == "x86_64" ]; then
-        input_arg="x86"
-    elif [ "$arch" == "arm64" ]; then
-        input_arg="aarch64"
-    elif [ "$arch" == "aarch64" ]; then
-        input_arg="aarch64"
-    fi
-fi
 
-if [ "$input_arg" == "isaac_sim_2022.2.1" ]; then
-    echo "Building Isaac Sim docker"
-    dockerfile="isaac_sim.dockerfile"
-    image_tag="isaac_sim_2022.2.1"
-    isaac_sim_version="2022.2.1"
-elif [ "$input_arg" == "isaac_sim_2023.1.0" ]; then
-    echo "Building Isaac Sim headless docker"
-    dockerfile="isaac_sim.dockerfile"
-    image_tag="isaac_sim_2023.1.0"
-    isaac_sim_version="2023.1.0"
-elif [ "$input_arg" == "x86" ]; then
-    echo "Building for X86 Architecture"
-    dockerfile="x86.dockerfile"
-    image_tag="x86"
-elif [ "$input_arg" = "aarch64" ]; then
-    echo "Building for ARM Architecture"
-    dockerfile="aarch64.dockerfile"
-    image_tag="aarch64"
+if 
+[ -n "$(docker images -q curobo_docker:x86)" ]
+then
+    echo "Docker image curobo_docker:x86 already exists"
 else
-    echo "Unknown Argument. Please pass one of [x86, aarch64, isaac_sim_2022.2.1, isaac_sim_2023.1.0]"
-    exit
+    echo "Docker image curobo_docker:x86 does not exist"
+    echo "Building docker image curobo_docker:x86"
+    # bash ../curobo/build_docker.sh
 fi
 
-# build docker file:
-# Make sure you enable nvidia runtime by:
-# Edit/create the /etc/docker/daemon.json with content:
-# {
-#    "runtimes": {
-#        "nvidia": {
-#            "path": "/usr/bin/nvidia-container-runtime",
-#            "runtimeArgs": []
-#         } 
-#    },
-#    "default-runtime": "nvidia" # ADD this line (the above lines will already exist in your json file)
-# }
-# 
-echo "${dockerfile}"
-
-docker build --build-arg ISAAC_SIM_VERSION=${isaac_sim_version} -t curobo_docker:${image_tag} -f ${dockerfile} . 
+docker build  -t data_generation_docker:${image_tag} -f "x86.dockerfile" --build-arg PLATFORM=x86 . 

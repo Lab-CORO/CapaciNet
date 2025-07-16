@@ -45,7 +45,6 @@ namespace cb_data_generator
             auto date_str = oss.str();
             this->data_file_path = ament_index_cpp::get_package_share_directory("data_generation") + "/data/" + date_str + ".h5";
 
-
             client_cb_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
             service_cb_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
             client_voxel_cb_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);

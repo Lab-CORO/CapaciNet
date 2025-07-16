@@ -1,133 +1,107 @@
-import numpy as np
-from load_data import VoxelDataset
-import open3d as o3d
 import h5py
+import numpy as np
+import os
 
-import sys
-np.set_printoptions(threshold=sys.maxsize)
+def load_voxel_from_hdf5(filepath, group_path="/group/0", dataset_name=["reachability_map", "voxel_grid"]):
+    """
+    Load a 3D voxel dataset from an HDF5 file.
 
+    Args:
+        filepath (str): Path to the HDF5 file.
+        group_path (str): Group inside the file (e.g., "/group/0").
+        dataset_name (str): Dataset name inside the group.
 
-def reformat_data(reachability_map, voxel_map):
-    reachability_map = np.resize(reachability_map,(4*5428,4))
-    voxel_map = np.resize(voxel_map,(voxel_map.shape[0]*voxel_map.shape[1],4))
+    Returns:
+        np.ndarray: Loaded voxel grid as a NumPy array.
+    """
+    with h5py.File(filepath, 'r') as f:
+        reachability_map_path = f"{group_path}/{dataset_name[0]}"
+        if reachability_map_path not in f:
+            return False
+            raise KeyError(f"Dataset not found: {reachability_map_path}")
+            
+        reachability_map = f[reachability_map_path][:]
+        print(f"Loaded voxel grid of shape {reachability_map.shape} from {reachability_map_path}")
 
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(reachability_map[:, :3])
-    voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(pcd,
-                                                            voxel_size=0.08)
-
-    # Get if reach point are on voxel grid:
-    queries = voxel_map[:, :3]
-    output = voxel_grid.check_if_included(o3d.utility.Vector3dVector(queries))
-    # print(output)
-
-    input()
-
-def generate_commun_map():
-
-    start, end, resolution = -1.5, 1.5, 0.08
-
-    # Create arrays for each dimension. Adding resolution to end ensures the endpoint is included.
-    x = np.arange(start, end, resolution)
-    y = np.arange(start, end, resolution)
-    z = np.arange(start, end, resolution)
-
-    # Create a 3D meshgrid of coordinates
-    X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
-
-    # Stack the coordinate arrays into a single (N, 3) array where N is the total number of voxels.
-    voxels = np.vstack((X.ravel(), Y.ravel(), Z.ravel())).T
-
-    # Create a column of zeros for the extra data
-    data = np.zeros((voxels.shape[0], 1))
-
-    # Concatenate the voxel coordinates with the data column to form a (N, 4) array.
-    commun_map = np.hstack((voxels, data))
-    return commun_map
-
-def fill_reachability_map(reachability_map,new_reachability_map):
-    new_reachability_map = np.round(new_reachability_map, 2)
-    voxel_index_dict = {
-        (str(new_reachability_map[i, 0])+str(new_reachability_map[i, 1])+str(new_reachability_map[i, 2])): i 
-        for i in range(new_reachability_map.shape[0])
-    }
-    # For each entry in update_data, update the corresponding voxel if it exists.
-    reachability_map = np.round(reachability_map, 2)
-    for row in reachability_map:
-        coord = str(row[0])+str(row[1])+str(row[2])
-        if coord in voxel_index_dict:
-            index = voxel_index_dict[coord]
-            new_reachability_map[index, 3] = row[3]
-
-    return new_reachability_map
-
-def fill_voxel_map(voxel_map,new_voxel_map):
-    voxel_map = np.resize(voxel_map,(voxel_map.shape[0]*voxel_map.shape[1],4))
-    voxel_pcd = []
-    # get point that are voxel
-    for point in voxel_map:
-        if point[3] == 0:
-            voxel_pcd.append(point[:3])
-    voxel_pcd = np.array(voxel_pcd)
-
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(voxel_pcd)
-    voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(pcd,
-                                                            voxel_size=0.08)
-    # o3d.visualization.draw_geometries([voxel_grid])
-    queries = new_voxel_map[:, :3]
-    output = voxel_grid.check_if_included(o3d.utility.Vector3dVector(queries))
-
-    for i, val in enumerate(output):
-        new_voxel_map[i, 3] = 0 if val else 1
-       
-
-    return new_voxel_map
+        # Voxel grid path
+        voxel_grid_path = f"{group_path}/{dataset_name[1]}"
+        if voxel_grid_path not in f:
+            return False
+            raise KeyError(f"Dataset not found: {voxel_grid_path}")
+            
+        voxel_grid = f[voxel_grid_path][:]
+        print(f"Loaded voxel grid of shape {voxel_grid.shape} from {voxel_grid_path}")
+        return reachability_map, voxel_grid
 
 
 
-dataset = VoxelDataset(root_dir='/workspace/CapaciNet/unet_3d/data')
-from torch.utils.data import DataLoader
-dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
+def upsample_map(voxel_map, old_size, old_res, new_res):
+    """
+    Upsample a voxel map using nearest-neighbor replication.
+    
+    Args:
+        voxel_map (np.ndarray): 3D array of shape (old_size, old_size, old_size)
+        old_size (int): size of the original voxel grid
+        old_res (float): original resolution
+        new_res (float): desired finer resolution
 
-with h5py.File("data.h5", "w") as f:
-    for i, sample in enumerate(dataloader):
-        # print reahcabilitymap and voxle grid in a file
-        commun_map = generate_commun_map()
+    Returns:
+        np.ndarray: upsampled 3D voxel map
+    """
+    scale = int(old_res / new_res)
+    new_size = old_size * scale
 
-        vox = fill_voxel_map(sample['voxel_grid'], commun_map.copy())
-        vox = np.resize(vox,(38, 38, 38, 4))
+    # Use numpy repeat to upscale in each dimension
+    upsampled = np.repeat(np.repeat(np.repeat(voxel_map, scale, axis=0), scale, axis=1), scale, axis=2)
 
-        reachability_map =sample['reachability_map']
-        reachability_map = np.resize(reachability_map,(4*5428,4))
-        res = fill_reachability_map(reachability_map, commun_map.copy())
-        res = np.resize(res,(38, 38, 38, 4))
-
-        # keep only the third value (we can get all others by info)
-        vox = vox[:,:,:,3]
-        res = res[:,:,:,3]
-
-        metadata = {
-        "resolution": sample['info']["resolution"],
-        "voxel_grid_origin": [-1.5, -1.5, -1.5],
-        "voxel_grid_sizes": [38, 38, 38]
-        }
+    print(f"Upsampled from {voxel_map.shape} to {upsampled.shape}")
+    return upsampled
 
 
-        # save the file to a HDF5 file
-        dataset_name = f"array_{i}"
-        dset1 = f.create_dataset(dataset_name+"/voxel_map", data=vox)
-        dset2 = f.create_dataset(dataset_name+"/reachability_map", data=res)
-        # dset1 = f.create_dataset(dataset_name+"/info", shape=len(dict))
+def save_voxel_to_hdf5(voxel_grid, reachability_map, filename, group_name="", dataset_name="reachability_map"):
+    """
+    Save a 3D voxel grid to an HDF5 file.
+    
+    Args:
+        voxel_grid (np.ndarray): 3D voxel map
+        filename (str): Output HDF5 file
+        group_name (str): HDF5 group path
+        dataset_name (str): Name of dataset inside group
+    """
+    with h5py.File(filename, 'w') as f:
+        f.create_dataset("raw", data=voxel_grid, compression="gzip")
+        f.create_dataset("label", data=reachability_map, compression="gzip")
+        print(f"Saved voxel grid to {filename} in {group_name}/{dataset_name}")
 
-        # dset1.attrs["voxel_map"] = vox
-        # dset1.attrs["reachability_map"] = res
-        dset1.attrs["resolution"] = metadata["resolution"]
-        dset1.attrs["voxel_grid_origin"] = metadata["voxel_grid_origin"]
-        dset1.attrs["voxel_grid_sizes"] = metadata["voxel_grid_sizes"]
 
-        dset2.attrs["resolution"] = metadata["resolution"]
-        dset2.attrs["voxel_grid_origin"] = metadata["voxel_grid_origin"]
-        dset2.attrs["voxel_grid_sizes"] = metadata["voxel_grid_sizes"]
+# Example usage
+if __name__ == "__main__":
+    old_size = 38
+    old_res = 0.08
+    new_res = 0.02
 
-        # input("valid")
+    # for loop in the folder data
+    directory = "/workspace/capacitynet/data/"
+
+    for file_name in os.listdir(directory):
+        is_fully_scan = False
+        index = 0
+        while (not is_fully_scan):
+            try:
+                reachability_map, voxel_grid = load_voxel_from_hdf5(directory + file_name, group_path=f"/group/{index}")
+                is_fully_scan = False
+                
+                # Upsample
+                upsampled_voxel_map = upsample_map(voxel_grid, old_size, old_res, new_res)
+                upsampled_reachability_map = upsample_map(reachability_map, old_size, old_res, new_res)
+
+                # Save as HDF5
+                file_name_split = os.path.split(file_name)
+                
+                output_filename = directory + "data_format/" + file_name[:-4] + f"_group_{index}.h5"
+
+                save_voxel_to_hdf5(upsampled_voxel_map, upsampled_reachability_map, output_filename)
+                index +=1
+            except:
+                is_fully_scan = True
+                index = 0
