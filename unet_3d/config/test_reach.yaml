@@ -1,5 +1,6 @@
 # path to the checkpoint file containing the model
-model_path: "/workspace/capacitynet/data/checkpoint/best_checkpoint.pytorch"
+# devices: "cpu"
+model_path: "/workspace/capacitynet/data/checkpoint/last_checkpoint.pytorch"
 # model configuration
 model:
   # model class, e.g. UNet3D, ResidualUNet3D
@@ -11,14 +12,19 @@ model:
   # determines the order of operators in a single layer (gcr - GroupNorm+Conv3d+ReLU)
   layer_order: gcr
   # number of features at each level of the U-Net
-  f_maps: [16, 32, 64, 128, 256]
+  f_maps: [32, 64,128,256, 512]
   # number of groups in the groupnorm
   num_groups: 8
   # if True applies the final normalization layer (sigmoid or softmax), otherwise the networks returns the output from the final convolution layer; use False for regression problems, e.g. de-noising
-  is_segmentation: false
+  is_segmentation: true
 predictor:
   # standard in memory predictor
   name: 'StandardPredictor'
+  # save_segmentation: true
+  # compute performance scores
+  # performance_metric: mean_iou
+  # internal path to the ground truth in the H5
+  # gt_internal_path: label
 # specify the test datasets
 loaders:
   # batch dimension; if number of GPUs is N > 1, then a batch_size of N * batch_size will automatically be taken for DataParallel
@@ -31,18 +37,23 @@ loaders:
     # paths to the test datasets; if a given path is a directory all H5 files ('*.h5', '*.hdf', '*.hdf5', '*.hd5')
     # inside this this directory will be included as well (non-recursively)
     file_paths:
-      - "/workspace/capacitynet/data/unet3d_padded/val/sample_000.h5"
+      - "/workspace/capacitynet/data/test/11_08_2025_14_19_1_group_6.h5"
+      - "/workspace/capacitynet/data/test/11_08_2025_14_19_1_group_6.h5"
+      - "/workspace/capacitynet/data/test/11_08_2025_14_19_1_group_6.h5"
+
+
+
 
     # SliceBuilder configuration, i.e. how to iterate over the input volume patch-by-patch
     slice_builder:
       # SliceBuilder class
       name: SliceBuilder
       # train patch size given to the network (adapt to fit in your GPU mem, generally the bigger patch the better)
-      patch_shape: [76, 76, 76]
+      patch_shape: [152, 152, 152]
       # train stride between patches
-      stride_shape: [76, 76, 76]
+      stride_shape: [152, 152, 152]
       # halo around each patch
-      halo_shape: [16, 32, 32]
+      halo_shape:  [0, 0, 0]
 
 
 
@@ -52,3 +63,4 @@ loaders:
           - name: Normalize
           - name: ToTensor
             expand_dims: true
+

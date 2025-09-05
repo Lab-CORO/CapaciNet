@@ -7,39 +7,40 @@ model:
   name: UNet3D
   in_channels: 1
   out_channels: 1
-  initial_feature_maps: 16
-  final_sigmoid: false  # régression, pas de sigmoïde en sortie
-  patch_size: [76, 76, 76]
+  initial_feature_maps: 32
+  final_sigmoid: true  # régression, pas de sigmoïde en sortie
   layer_order: gcr
-  f_maps: [16,32,64,128,256]
+  f_maps: [16, 32, 64,128,256]
   num_groups: 8
 
 
 loss:
-  name: SmoothL1Loss  # un bon compromis entre L1 et MSE
+  name: BCEDiceLoss  # un bon compromis entre L1 et MSE
 
 eval_metric:
-  name: PSNR  # métrique plus pertinente pour la régression d’image
+  name: DiceCoefficient     # métrique plus pertinente pour la régression d’image
 
 optimizer:
-  learning_rate: 0.0002
-  weight_decay: 0.00001
+  learning_rate: 0.0001     # 1e-4 (good starting point for Adam)
+  weight_decay: 0.00001     # keep as is
 
 lr_scheduler:
   name: ReduceLROnPlateau
-  mode: max  # PSNR est à maximiser
-  factor: 0.1
-  patience: 10
+  mode: min                 # we want to minimize validation loss
+  factor: 0.5               # reduce LR by half instead of 0.1 (less aggressive)
+  patience: 10              # wait 10 epochs before reducing
+  cooldown: 2               # wait a bit before resuming LR checks
+  min_lr: 0.0000001         # don’t go below 1e-7
 
 trainer:
   eval_score_higher_is_better: True
-  checkpoint_dir: "/workspace/capacitynet/data/unet3d_padded/checkpoint"
+  checkpoint_dir: "/workspace/capacitynet/data/checkpoint"
   resume: null
   pre_trained: null
-  validate_after_iters: 1000
-  log_after_iters: 500
-  max_num_epochs: 1000
-  max_num_iterations: 150000
+  validate_after_iters: 10
+  log_after_iters: 10
+  max_num_epochs: 500
+  max_num_iterations: 15000000
 
 loaders:
   num_workers: 1
@@ -47,14 +48,14 @@ loaders:
   label_internal_path: label
 
   train:
-    file_paths: ["/workspace/capacitynet/data/unet3d_padded/train"]
+    file_paths: ["/workspace/capacitynet/data/data_format/train/16_07_2025_01_04_3_group_70.h5"]
     slice_builder:
       name: SliceBuilder
-      patch_shape: [76, 76, 76]
-      stride_shape: [76, 76, 76]
+      patch_shape: [152, 152, 152]
+      stride_shape: [152, 152, 152]
     transformer:
       raw:
-        - name: Normalize
+        - name: Identity
         - name: ToTensor
           expand_dims: true
       label:
@@ -63,14 +64,14 @@ loaders:
           expand_dims: true
 
   val:
-    file_paths: ["/workspace/capacitynet/data/unet3d_padded/val"]
+    file_paths: ["/workspace/capacitynet/data/data_format/val/16_07_2025_01_04_3_group_70.h5"]
     slice_builder:
       name: SliceBuilder
-      patch_shape: [76, 76, 76]
-      stride_shape: [76, 76, 76]
+      patch_shape: [152, 152, 152]
+      stride_shape: [152, 152, 152]
     transformer:
       raw:
-        - name: Normalize
+        - name: Identity
         - name: ToTensor
           expand_dims: true
       label:
@@ -79,280 +80,5 @@ loaders:
           expand_dims: true
 
 train:
-  epochs: 100
+  epochs: 200
   batch_size: 1
-
-device: cuda
-# ------------------------------------------------------------------------------
-
-# # --- configuration pour la prédiction (predict3dunet) -----------------------
-# predict:
-#   dataset:
-#     name: LazyHDF5Dataset
-#   slice_builder:
-#     name: SliceBuilder
-#     patch_shape: [76, 76, 76]
-#     stride_shape: [38, 38, 38]  # overlap 50 %
-#     halo_shape: [19, 19, 19]    # halo adapté pour éviter artifacts (moitié de l'overlap)
-#   transformer:
-#     raw:
-#       - name: Normalize
-#       - name: ToTensor
-#         expand_dims: true
-#   predictor:
-#     save_segments: false
-#     output_postfix: "_pred"
-# # ------------------------------------------------------------------------------
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# # --- configuration principale -------------------------------------------------
-# dataset:                         # <-- nécessaire pour accepter des labels float32
-#   name: HDF5Dataset
-
-# model:
-#   name: UNet3D
-#   in_channels: 1
-#   out_channels: 1
-#   initial_feature_maps: 16
-#   final_sigmoid: false           # régression
-#   patch_size: [76, 76,76]     # identique au pad offline
-
-# loss:
-#   name: MSELoss
-
-# eval_metric:
-#   name: MSE                     # métrique de régression disponible
-
-# optimizer:
-#   # initial learning rate
-#   learning_rate: 0.0002
-#   # weight decay
-#   weight_decay: 0.00001
-
-# trainer:
-#   # model with lower eval score is considered better
-#   eval_score_higher_is_better: False
-#   # path to the checkpoint directory
-#   checkpoint_dir: "/workspace/capacitynet/data/unet3d_padded/checkpoint"
-#   # path to latest checkpoint; if provided the training will be resumed from that checkpoint
-#   resume: null
-#   # path to the best_checkpoint.pytorch; to be used for fine-tuning the model with additional ground truth
-#   # make sure to decrease the learning rate in the optimizer config accordingly
-#   pre_trained: null
-#   # how many iterations between validations
-#   validate_after_iters: 1000
-#   # how many iterations between tensorboard logging
-#   log_after_iters: 500
-#   # max number of epochs
-#   max_num_epochs: 1000
-#   # max number of iterations
-#   max_num_iterations: 150000
-
-# # ------------------------------------------------------------------------------
-
-# loaders:
-#   num_workers: 1
-
-#   # chemins internes dans chaque .h5
-#   raw_internal_path: raw
-#   label_internal_path: label
-
-#   # *** TRAIN ***
-#   train:
-#     file_paths:
-#       - "/workspace/capacitynet/data/unet3d_padded/train"
-
-#     slice_builder:
-#       name: FilterSliceBuilder
-#       patch_shape:  [76, 76, 76]
-#       stride_shape: [76, 76, 76]   # pas de recouvrement
-#       threshold: 0.0                 # (<— pas de filtrage, on garde tous les patchs)
-#       slack_acceptance: 1.0          # (<— accepte tout si threshold=0)
-
-#     transformer:
-#       raw:
-#         - name: Normalize
-#         - name: ToTensor
-#           expand_dims: true
-#       label:
-#         - name: Identity
-#         - name: ToTensor
-#           expand_dims: true
-
-#   # *** VALIDATION ***
-#   val:
-#     file_paths:
-#       - "/workspace/capacitynet/data/unet3d_padded/val"
-
-#     slice_builder:
-#       name: FilterSliceBuilder
-#       patch_shape:  [76, 76, 76]
-#       stride_shape: [76, 76, 76]
-#       threshold: 0.0
-#       slack_acceptance: 1.0
-
-#     transformer:
-#       raw:
-#         - name: Normalize
-#         - name: ToTensor
-#           expand_dims: true
-#       label:
-#         - name: Identity
-#         - name: ToTensor
-#           expand_dims: true
-
-# # ------------------------------------------------------------------------------
-
-# train:                            # paramètres d’apprentissage essentiels
-#   epochs: 100
-#   batch_size: 1
-
-# device: cuda                      # entraîne sur GPU (RTX 4070)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# chatpgpt
-# --- configuration principale -------------------------------------------------
-# manual_seed: 42  # assure une reproductibilité
-# dataset:
-#   name: HDF5Dataset
-
-# model:
-#   name: UNet3D
-#   in_channels: 1
-#   out_channels: 1
-#   initial_feature_maps: 16
-#   final_sigmoid: false  # régression, pas de sigmoïde en sortie
-#   patch_size: [76, 76, 76]
-
-# loss:
-#   name: SmoothL1Loss  # un bon compromis entre L1 et MSE
-
-# eval_metric:
-#   name: PSNR  # métrique plus pertinente pour la régression d’image
-
-# optimizer:
-#   learning_rate: 0.0002
-#   weight_decay: 0.00001
-
-# lr_scheduler:
-#   name: ReduceLROnPlateau
-#   mode: max  # PSNR est à maximiser
-#   factor: 0.1
-#   patience: 10
-
-# trainer:
-#   eval_score_higher_is_better: True
-#   checkpoint_dir: "/workspace/capacitynet/data/unet3d_padded/checkpoint"
-#   resume: null
-#   pre_trained: null
-#   validate_after_iters: 1000
-#   log_after_iters: 500
-#   max_num_epochs: 1000
-#   max_num_iterations: 150000
-
-# loaders:
-#   num_workers: 1
-#   raw_internal_path: raw
-#   label_internal_path: label
-
-#   train:
-#     file_paths: ["/workspace/capacitynet/data/unet3d_padded/train"]
-#     slice_builder:
-#       name: SliceBuilder
-#       patch_shape: [76, 76, 76]
-#       stride_shape: [76, 76, 76]
-#     transformer:
-#       raw:
-#         - name: Normalize
-#         - name: RandomFlip
-#         - name: RandomRotate90
-#         - name: RandomRotate
-#           axes: [[2, 1]]
-#           angle_spectrum: 30
-#           mode: reflect
-#         - name: ToTensor
-#           expand_dims: true
-#       label:
-#         - name: Normalize
-#         - name: RandomFlip
-#         - name: RandomRotate90
-#         - name: RandomRotate
-#           axes: [[2, 1]]
-#           angle_spectrum: 30
-#           mode: reflect
-#         - name: ToTensor
-#           expand_dims: true
-
-#   val:
-#     file_paths: ["/workspace/capacitynet/data/unet3d_padded/val"]
-#     slice_builder:
-#       name: SliceBuilder
-#       patch_shape: [76, 76, 76]
-#       stride_shape: [76, 76, 76]
-#     transformer:
-#       raw:
-#         - name: Normalize
-#         - name: ToTensor
-#           expand_dims: true
-#       label:
-#         - name: Normalize
-#         - name: ToTensor
-#           expand_dims: true
-
-# train:
-#   epochs: 100
-#   batch_size: 1
-
-# device: cuda
-# # ------------------------------------------------------------------------------
-
-# # --- configuration pour la prédiction (predict3dunet) -----------------------
-# predict:
-#   dataset:
-#     name: LazyHDF5Dataset
-#   slice_builder:
-#     name: SliceBuilder
-#     patch_shape: [76, 76, 76]
-#     stride_shape: [38, 38, 38]  # overlap 50 %
-#     halo_shape: [19, 19, 19]    # halo adapté pour éviter artifacts (moitié de l'overlap)
-#   transformer:
-#     raw:
-#       - name: Normalize
-#       - name: ToTensor
-#         expand_dims: true
-#   predictor:
-#     save_segments: false
-#     output_postfix: "_pred"
-# # ------------------------------------------------------------------------------
