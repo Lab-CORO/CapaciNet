@@ -15,7 +15,32 @@
 # If you want to build a isaac sim docker, run this script with `bash build_dev_docker.sh isaac`
 
 # Check architecture to build:
-image_tag="x86"
+
+echo "Choose your GPU card model :"
+echo "1) RTX 30XX"
+echo "2) RTX 40XX"
+echo "3) A100"
+read -p "Enter the number corresponding to your model: " choice
+
+# Définir TORCH_CUDA_ARCH_LIST en fonction du choix de l'utilisateur
+case $choice in
+    1)
+        image_tag="rtx30xxx"
+        ;;
+    2)
+        image_tag="rtx40xxx"
+        ;;
+    3)
+        image_tag="A100"
+        ;;
+    # 4)
+    #     image_tag="x86"
+    #     ;;
+    *)
+        echo "Choix invalide, utilisant la valeur par défaut pour RTX 30XX"
+        image_tag="rtx30xxx"
+        ;;
+esac
 
 
 if 
@@ -28,4 +53,4 @@ else
     # bash ../curobo/build_docker.sh
 fi
 
-docker build  -t data_generation_docker:${image_tag} -f "x86.dockerfile" --build-arg PLATFORM=x86 . 
+docker build  -t data_generation_docker:${image_tag} -f "x86.dockerfile" --build-arg PLATFORM=${image_tag} . 

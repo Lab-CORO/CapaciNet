@@ -1,5 +1,5 @@
 # add arg to specify the platform: rtx 4000 or rtx3000 (a100)
-ARG PLATFORM=a100
+ARG PLATFORM=A100
 FROM curobo_docker:${PLATFORM}
 ARG GIT_USERNAME
 ARG GIT_EMAIL
