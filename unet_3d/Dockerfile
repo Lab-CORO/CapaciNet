@@ -39,3 +39,10 @@ RUN pip uninstall em && \
     pip install empy==3.3.4 && \
     cd /workspace/capacitynet/ros2_ws/src && \
     pip install lark catkin_pkg open3d
+
+
+RUN  apt-get update && apt-get install -y ros-humble-rmw-cyclonedds-cpp ros-humble-cyclonedds
+
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+
+ENV PYTHONPATH=/opt/conda/lib/python3.10/site-packages:$PYTHONPATH
