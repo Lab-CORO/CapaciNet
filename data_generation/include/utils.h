@@ -21,7 +21,7 @@
 
         static bool save_poses_to_file(const std::string& filename, const std::vector<geometry_msgs::msg::Pose>& poses);
         static bool load_poses_from_file(const std::string& filename, std::vector<geometry_msgs::msg::Pose>& poses);
-        static bool split_data(const std::vector<geometry_msgs::msg::Pose>& data,
+        static bool split_data(std::vector<geometry_msgs::msg::Pose>& data,
                                         size_t batch_size,
                                         std::vector<std::vector<geometry_msgs::msg::Pose>>& batches);
         static bool saveVecToNpz(const std::string& filename, const std::vector<std::array<double, 4>>& data);

@@ -49,6 +49,20 @@ namespace cb_data_generator
             service_cb_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
             client_voxel_cb_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
             this->dataset_id = 0;
+            // Get resolution from ros param
+            this->voxel_size = 0;
+            this->declare_parameter("voxel_size", 0.5);
+            this->get_parameter("voxel_size", voxel_size);
+            std::stringstream resolution_string;
+            resolution_string << voxel_size;              // appending the float value to the streamclass
+            // Load the reachablity map from the resolution
+            utils::load_poses_from_file(ament_index_cpp::get_package_share_directory("data_generation") + "/data" + "/master_ik_data" + resolution_string.str() + ".npz", this->raw_datas);
+            for (const auto& data_pt : this->raw_datas) {
+                // on prend le risque de la dedondance mais au piure on fera un round sur les coords x y z
+                std::vector<double> pt = {round(data_pt.position.x*100)/100, round(data_pt.position.y *100)/100, round(data_pt.position.z*100)/100};
+                this->map_rm[pt] = 0.0;
+            }
+
             auto callback_generate_rm = [this](const std::shared_ptr<curobo_msgs::srv::GenerateRM::Request> request,
                                                std::shared_ptr<curobo_msgs::srv::GenerateRM::Response> response)
             {
@@ -85,6 +99,11 @@ namespace cb_data_generator
             this->data_file_->flush();
             RCLCPP_INFO(this->get_logger(), "DataGenerator is shutting down.");
         }
+        
+        bool load_reachability_map(float voxel_size)
+        {
+            return true;
+        }
 
         bool data_generation(int batch_size, float resolution)
         {
@@ -94,19 +113,6 @@ namespace cb_data_generator
             auto start_time = std::chrono::high_resolution_clock::now();
 
             std::vector<geometry_msgs::msg::Pose> data;
-
-            std::stringstream resolution_string;
-            resolution_string << resolution;              // appending the float value to the streamclass
-            std::string result = resolution_string.str(); // converting the float value to string
-
-            // Create a dict as rm to store scores
-            // for loop to get all raw_data and set it as a map (dict)
-            utils::load_poses_from_file(ament_index_cpp::get_package_share_directory("data_generation") + "/data" + "/master_ik_data" + result + ".npz", this->raw_datas);
-            for (const auto& data_pt : this->raw_datas) {
-                // on prend le risque de la dedondance mais au piure on fera un round sur les coords x y z
-                std::vector<double> pt = {round(data_pt.position.x*100)/100, round(data_pt.position.y *100)/100, round(data_pt.position.z*100)/100};
-                this->map_rm[pt] = 0.0;
-            }
 
             // split data into batches
             std::vector<std::vector<geometry_msgs::msg::Pose>> batches;
@@ -149,8 +155,6 @@ namespace cb_data_generator
                     RCLCPP_ERROR(this->get_logger(), "Service call failed");
                     return false;
                 }
-
-                // data_result.reserve(data_result.size() + data.size());
 
                 for (size_t i = 0; i < joint_states.size(); ++i)
                 {
@@ -390,6 +394,7 @@ namespace cb_data_generator
         std::shared_ptr<HighFive::File> data_file_;
         std::string data_file_path;
         int dataset_id;
+        float voxel_size;
         std::map<std::vector<double>, double> map_rm;
         std::vector<geometry_msgs::msg::Pose>raw_datas;
     };

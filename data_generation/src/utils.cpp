@@ -20,29 +20,31 @@ double utils::round_to_decimals(double value, int decimals) {
 }
 
 
-bool utils::split_data(const std::vector<geometry_msgs::msg::Pose>& data, size_t max_batch_size, std::vector<std::vector<geometry_msgs::msg::Pose>>& batches) {
+bool utils::split_data(std::vector<geometry_msgs::msg::Pose>& data, size_t max_batch_size, std::vector<std::vector<geometry_msgs::msg::Pose>>& batches) {
     if (max_batch_size == 0) {
         std::cerr << "Batch size must be greater than 0." << std::endl;
         return false;
     }
+    // Get the number of batch 
+    size_t num_batche = std::size(data) / max_batch_size;
+    size_t batch_size = std::size(data) / num_batche;
 
+    // r=Ncmodk
+    // Compute reste and add an absurde value
+    size_t reste =   std::size(data) % num_batche;
+    geometry_msgs::msg::Pose reste_pose;
+    reste_pose.position.x = 1225.0;
+    reste_pose.position.y = 1225.0;
+    reste_pose.position.z = 1225.0;
 
-
-    size_t batch_size = 1;
-    for (size_t size = max_batch_size; size >= 1; size--){
-        double reste =  std::size(data) % size;
-        if (reste == 0){
-            batch_size = size;
-            // printf("found: %i \n", num_batches );
-            break;
-        }
-    }
-    size_t num_batches = std::size(data) / batch_size;
+    for (size_t r = 0; r <= reste; r++){
+         data.push_back(reste_pose);
+    } 
 
     batches.clear();
-    for (size_t i = 0; i < num_batches; ++i) {
+    for (size_t i = 0; i < num_batche; ++i) {
         size_t start_idx = i * batch_size;
-        size_t end_idx = std::min(start_idx + batch_size, std::size(data));
+        size_t end_idx = i * batch_size + batch_size;
         std::vector<geometry_msgs::msg::Pose> batch(data.begin() + start_idx, data.begin() + end_idx);
         batches.push_back(batch);
     }

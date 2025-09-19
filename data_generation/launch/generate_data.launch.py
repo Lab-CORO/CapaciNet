@@ -12,7 +12,7 @@ def generate_launch_description():
     obj_max = LaunchConfiguration('obj_max')
     voxel_size_arg = DeclareLaunchArgument(
         'voxel_size',
-        default_value="0.08",  # Set the default value
+        default_value="0.02",  # Set the default value
     )
     dataset_size_arg = DeclareLaunchArgument(
         'dataset_size',
@@ -59,6 +59,14 @@ def generate_launch_description():
             executable='generate_data',
             name='generate_data',
             output='screen',
+            parameters=[
+                {"voxel_size": voxel_size,
+                "dataset_size": dataset_size,
+                "batch_size": batch_size,
+                "reach_max": reach_max,
+                "obj_max": obj_max,
+                }
+            ]
         ),
         Node(
             package='data_generation',
