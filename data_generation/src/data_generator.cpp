@@ -53,6 +53,7 @@ namespace cb_data_generator
             this->voxel_size = 0;
             this->declare_parameter("voxel_size", 0.5);
             this->get_parameter("voxel_size", voxel_size);
+            this->voxel_size = voxel_size;
             std::stringstream resolution_string;
             resolution_string << voxel_size;              // appending the float value to the streamclass
             // Load the reachablity map from the resolution
@@ -280,7 +281,7 @@ namespace cb_data_generator
                                             1.0))); // initial value is 1.0 (means free voxel)
             
             // 
-            double resolution = 0.08;
+            double resolution = this->voxel_size;
             double origine = -1.5;
             double max_size = 1.5;
 

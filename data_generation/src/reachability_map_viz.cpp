@@ -58,7 +58,7 @@ public:
     {
         std::vector<geometry_msgs::msg::Pose> data;
 
-        utils::load_poses_from_file(ament_index_cpp::get_package_share_directory("data_generation") + "/data" + "/master_ik_data" + "0.08" + ".npz", data);
+        utils::load_poses_from_file(ament_index_cpp::get_package_share_directory("data_generation") + "/data" + "/master_ik_data" + "0.02" + ".npz", data);
 
         std::map<std::vector<double>, double> map_rm;
 
@@ -74,7 +74,7 @@ public:
         std::vector<std::array<double, 4>> voxel_map = {};
         int voxel_grid_sizes[3]  = {38, 38, 38};
         double voxel_grid_origin[3] = {-1.5, -1.5, -1.5};
-        float resolution = 0.08;
+        float resolution = 0.02;
         this->saveToHDF5(map_rm, voxel_map, resolution, voxel_grid_sizes, voxel_grid_origin);
 
 
@@ -95,7 +95,7 @@ public:
                                             1.0))); // initial value is 1.0 (means free voxel)
             
             // 
-            double resolution = 0.08;
+            double resolution = 0.02;
             double origine = -1.5;
             double max_size = 1.5;
 
