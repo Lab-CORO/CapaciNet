@@ -6,6 +6,7 @@ from launch.substitutions import LaunchConfiguration
 
 def generate_launch_description():
     voxel_size = LaunchConfiguration('voxel_size')
+    init_btch_size = LaunchConfiguration('init_btch_size')
     dataset_size = LaunchConfiguration('dataset_size')
     batch_size = LaunchConfiguration('batch_size')
     reach_max = LaunchConfiguration('reach_max')
