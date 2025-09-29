@@ -6,7 +6,7 @@ from launch.substitutions import LaunchConfiguration
 
 def generate_launch_description():
     voxel_size = LaunchConfiguration('voxel_size')
-    init_btch_size = LaunchConfiguration('init_btch_size')
+    init_batch_size = LaunchConfiguration('init_batch_size')
     dataset_size = LaunchConfiguration('dataset_size')
     batch_size = LaunchConfiguration('batch_size')
     reach_max = LaunchConfiguration('reach_max')
@@ -15,8 +15,8 @@ def generate_launch_description():
         'voxel_size',
         default_value="0.02",  # Set the default value
     )
-    init_btch_size_arg = DeclareLaunchArgument(
-        'init_btch_size',
+    init_batch_size_arg = DeclareLaunchArgument(
+        'init_batch_size',
         default_value="1000",  # Set the default value
     )
     dataset_size_arg = DeclareLaunchArgument(
@@ -36,7 +36,7 @@ def generate_launch_description():
         default_value= "20",  # Set the default value
     )
     return LaunchDescription([
-        init_btch_size_arg,
+        init_batch_size_arg,
         voxel_size_arg,
         dataset_size_arg,
         batch_size_arg,
@@ -50,7 +50,7 @@ def generate_launch_description():
             output='screen',
             parameters=[
                 {"voxel_size": voxel_size,
-                "init_btch_size":init_btch_size}
+                "init_batch_size":init_batch_size}
             ]
         ),
         # Launch the obstacle_adder node
