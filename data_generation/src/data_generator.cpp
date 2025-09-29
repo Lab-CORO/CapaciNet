@@ -74,11 +74,7 @@ namespace cb_data_generator
                 return response;
             };
 
-            service_ = this->create_service<curobo_msgs::srv::GenerateRM>(
-                "generate_rm",
-                callback_generate_rm,
-                rmw_qos_profile_services_default,
-                service_cb_group_);
+
 
             client_ik = this->create_client<curobo_msgs::srv::IkBatch>("/curobo_ik/ik_batch_poses", rmw_qos_profile_services_default,
                                                                   client_cb_group_);
@@ -93,6 +89,12 @@ namespace cb_data_generator
                 RCLCPP_WARN(this->get_logger(), "/client_ik service is not available, retrying...");
             }
             RCLCPP_INFO(this->get_logger(), "/client_ik service is now available.");
+
+            service_ = this->create_service<curobo_msgs::srv::GenerateRM>(
+                "generate_rm",
+                callback_generate_rm,
+                rmw_qos_profile_services_default,
+                service_cb_group_);
         }
 
         ~DataGenerator()

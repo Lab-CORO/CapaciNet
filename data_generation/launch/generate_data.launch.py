@@ -14,6 +14,10 @@ def generate_launch_description():
         'voxel_size',
         default_value="0.02",  # Set the default value
     )
+    init_btch_size_arg = DeclareLaunchArgument(
+        'init_btch_size',
+        default_value="1000",  # Set the default value
+    )
     dataset_size_arg = DeclareLaunchArgument(
         'dataset_size',
         default_value="5",  # Set the default value
@@ -31,6 +35,7 @@ def generate_launch_description():
         default_value= "20",  # Set the default value
     )
     return LaunchDescription([
+        init_btch_size_arg,
         voxel_size_arg,
         dataset_size_arg,
         batch_size_arg,
@@ -43,7 +48,8 @@ def generate_launch_description():
             name='curobo_ik',
             output='screen',
             parameters=[
-                {"voxel_size": voxel_size}
+                {"voxel_size": voxel_size,
+                "init_btch_size":init_btch_size}
             ]
         ),
         # Launch the obstacle_adder node
