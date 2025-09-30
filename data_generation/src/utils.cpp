@@ -27,26 +27,26 @@ bool utils::split_data(std::vector<geometry_msgs::msg::Pose>& data, size_t max_b
     }
     // Get the number of batch 
     size_t num_batche = std::size(data) / max_batch_size;
-    size_t batch_size = std::size(data) / num_batche;
 
     
     // Compute reste and add an absurde value
-    size_t reste =   std::size(data) % num_batche;
+    size_t reste =   std::size(data) - (num_batche * max_batch_size) ;
     // Absurde value
     geometry_msgs::msg::Pose reste_pose;
     reste_pose.position.x = 1225.0;
     reste_pose.position.y = 1225.0;
     reste_pose.position.z = 1225.0;
 
-    for (size_t r = 0; r <= max_batch_size - reste; r++){
-         data.push_back(reste_pose);
-    } 
+    if (reste != 0){
+        for (size_t r = 0; r < max_batch_size - reste ; r++){
+             data.push_back(reste_pose);
+        } 
+     }
     num_batche = std::size(data) / max_batch_size;
-    batch_size = std::size(data) / num_batche;
     batches.clear();
     for (size_t i = 0; i < num_batche; ++i) {
-        size_t start_idx = i * batch_size;
-        size_t end_idx = i * batch_size + batch_size;
+        size_t start_idx = i * max_batch_size;
+        size_t end_idx = i * max_batch_size + max_batch_size;
         std::vector<geometry_msgs::msg::Pose> batch(data.begin() + start_idx, data.begin() + end_idx);
         batches.push_back(batch);
     }
