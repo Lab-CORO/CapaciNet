@@ -61,7 +61,12 @@ add_executable(create_reachability_map
 
 )
 target_include_directories(create_reachability_map PUBLIC ${OCTOMAP_INCLUDE_DIRS})
-target_link_libraries(create_reachability_map ${OCTOMAP_LIBRARIES})
+target_link_libraries(create_reachability_map 
+                      ${OCTOMAP_LIBRARIES}
+                      ${rclcpp_LIBRARIES}
+                      ${HDF5_LIBRARIES}
+                      ${HighFive_LIBRARIES}
+                    )
 #ament_target_dependencies(create_reachability_map rclcpp ${OCTOMAP_LIBRARIES} geometry_msgs tf2_geometry_msgs pcl_ros Eigen3)
 
 ament_target_dependencies(create_reachability_map rclcpp geometry_msgs curobo_msgs tf2_geometry_msgs pcl_ros Eigen3)

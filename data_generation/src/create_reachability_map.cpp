@@ -2,7 +2,6 @@
 
 #include "../include/sphere_discretization.h"
 #include "rclcpp/rclcpp.hpp"
-// #include <ros/package.h>
 #include <octomap/octomap.h>
 #include <octomap/MapCollection.h>
 #include <octomap/math/Utils.h>
@@ -77,7 +76,7 @@ bool isFloat(std::string s)
 int main(int argc, char **argv)
 {
     rclcpp::init(argc, argv);
-    auto node = rclcpp::Node::make_shared("workspace");
+    auto node = rclcpp::Node::make_shared("create_reachability_map");
 
     rclcpp::Client<curobo_msgs::srv::IkBatch>::SharedPtr client_ik = node->create_client<curobo_msgs::srv::IkBatch>("/curobo_ik/ik_batch_poses", rmw_qos_profile_services_default);
     // wait for the service up
@@ -94,10 +93,10 @@ int main(int argc, char **argv)
     bool debug = false;
     rclcpp::Time startit = node->get_clock()->now();
 
-    float voxel_size = 0;
+    float resolution = 0;
     node->declare_parameter("voxel_size", 0.08);
-    node->get_parameter("voxel_size", voxel_size);
-    float resolution = voxel_size;
+    node->get_parameter("voxel_size", resolution);
+
 
     int count = 0;
     //    get time
@@ -113,7 +112,8 @@ int main(int argc, char **argv)
     // The center of every voxels are stored in a vector
 
     sphere_discretization::SphereDiscretization sd;
-    float r = 2;
+    float r = 2; // 2 metre ?
+     float radius = 0.0001; // size of the sphere that represent the voxel (really small, we want a point)
     octomap::point3d origin = octomap::point3d(0, 0, 0); // This point will be the base of the robot
     octomap::OcTree *tree = sd.generateBoxTree(origin, r, resolution);
     std::vector<octomap::point3d> new_data;
@@ -126,7 +126,7 @@ int main(int argc, char **argv)
     }
     new_data.reserve(sphere_count);
 
-    float radius = 0.0001;
+   
 
     for (octomap::OcTree::leaf_iterator it = tree->begin_leafs(max_depth), end = tree->end_leafs(); it != end; ++it)
     {
@@ -148,7 +148,7 @@ int main(int argc, char **argv)
         }
     }
 
-    RCLCPP_INFO(node->get_logger(), "Total no of spheres now: %lu", new_data.size());
+    RCLCPP_INFO(node->get_logger(), "Total no of spheres now: %lu", reachability_poses.size());
     RCLCPP_INFO(node->get_logger(),
                 "Please hold ON. Spheres are discretized and all of the poses are checked for Ik solutions. May take some "
                 "time");
@@ -172,6 +172,7 @@ int main(int argc, char **argv)
 
     // vector of 7d to save with cnpy
     std::vector<geometry_msgs::msg::Pose> poses_vector2save;
+    std::map<std::vector<double>, double> map_rm;
 
     // Split datas to max_batch_size
     std::vector<std::vector<geometry_msgs::msg::Pose>> batches;
@@ -210,11 +211,13 @@ int main(int argc, char **argv)
 
         for (int j = 0; j < joint_states.size(); j++)
         {
+            std::vector<double> pt = {round(batch[j].position.x*100)/100, round(batch[j].position.y*100)/100, round(batch[j].position.z*100)/100};
             if (joint_states_valid[j].data)
             {
                 // save the pose in vector
 
                 poses_vector2save.push_back(batch[j]);
+                map_rm[pt] += 1.0 / 50.0;
             }
         }
 
@@ -223,8 +226,25 @@ int main(int argc, char **argv)
     // save vector to cnpy to the data file in data_generation ros package
     std::stringstream resolution_string;
     resolution_string << resolution;              // appending the float value to the streamclass
-    std::string result = resolution_string.str(); // converting the float value to string
-    utils::save_poses_to_file(std::string("/home/ros2_ws/src/") +  "/master_ik_data" + result + ".npz", poses_vector2save);
+
+    // Save to hdf5
+    std::shared_ptr<HighFive::File> data_file_;
+    std::string data_file_path;
+    data_file_path = ament_index_cpp::get_package_share_directory("data_generation") + "/data/" + "master_ik_data" + resolution_string.str() + ".h5";
+    data_file_ = std::make_shared<HighFive::File>(
+                data_file_path,
+                HighFive::File::ReadWrite | HighFive::File::Create);
+
+    std::vector<std::array<double, 4>> voxel_map = {};
+    double rm_size = round(r * 2 / resolution);
+    int voxel_grid_sizes[3] = {rm_size, rm_size, rm_size};
+    double voxel_grid_origin[3] = {-r, -r, -r}; 
+
+    utils::saveToHDF5(map_rm, voxel_map, resolution, voxel_grid_sizes, voxel_grid_origin, data_file_, 0);
+    
+    data_file_->flush();
+    
+    utils::save_poses_to_file(std::string("/home/ros2_ws/src/") +  "/master_ik_data" + resolution_string.str() + ".npz", poses_vector2save);
     // data_ik.write_data(std::string("/home/ros2_ws/src/capacitynet")+ "/data"  + "/master_ik_data" + result + ".json");
         // ament_index_cpp::get_package_share_directory("data_generation") + "/data"  + "/master_ik_data" + result + ".json");
     // get time

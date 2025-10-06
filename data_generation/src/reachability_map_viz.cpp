@@ -36,7 +36,7 @@ public:
     ReachabilityMapVizualisation()
         : Node("reachability_map_vizualisation_node")
     {
-        this->declare_parameter("file_name", "/home/ros2_ws/install/data_generation/share/data_generation/data/master_ik_data0.5.json");
+        this->declare_parameter("file_name", "/home/ros2_ws/install/data_generation/share/data_generation/data/master_ik_data0.5.npz");
         this->file_name = this->get_parameter("file_name").as_string();
 
         // RCLCPP_INFO(node->get_logger(), "msg created");

@@ -195,7 +195,8 @@ namespace cb_data_generator
 
             start_time = std::chrono::high_resolution_clock::now();
 
-            this->saveToHDF5(this->map_rm, voxel_map, resolution, voxel_grid_sizes, voxel_grid_origin);
+            utils::saveToHDF5(this->map_rm, voxel_map, resolution, voxel_grid_sizes, voxel_grid_origin, this->data_file_, this->dataset_id);
+            this->dataset_id += 1;
             // End the timer
             end_time = std::chrono::high_resolution_clock::now();
             // Calculate the elapsed time in milliseconds
@@ -264,92 +265,92 @@ namespace cb_data_generator
                 return;
             }
         }
-        bool saveToHDF5(const std::map<std::vector<double>, double> &data,
-                        const std::vector<std::array<double, 4>> &voxel_grid,
-                        float voxel_size,
-                        int (&voxel_grid_sizes)[3],
-                        double (&voxel_grid_origin)[3])
-        {
-            using namespace HighFive;
+        // bool saveToHDF5(const std::map<std::vector<double>, double> &data,
+        //                 const std::vector<std::array<double, 4>> &voxel_grid,
+        //                 float voxel_size,
+        //                 int (&voxel_grid_sizes)[3],
+        //                 double (&voxel_grid_origin)[3])
+        // {
+        //     using namespace HighFive;
 
-            // size_t data_size = data.size();
-            // size_t voxel_grid_size = voxel_grid.size();
+        //     // size_t data_size = data.size();
+        //     // size_t voxel_grid_size = voxel_grid.size();
 
-            // std::vector<size_t> dims{data_size, 4};
+        //     // std::vector<size_t> dims{data_size, 4};
             
-            vector<vector<vector<double>>> voxel_grid_data(voxel_grid_sizes[0], 
-                                            vector<vector<double>>(voxel_grid_sizes[1], 
-                                            vector<double>(voxel_grid_sizes[2], 
-                                            1.0))); // initial value is 1.0 (means free voxel)
+        //     vector<vector<vector<double>>> voxel_grid_data(voxel_grid_sizes[0], 
+        //                                     vector<vector<double>>(voxel_grid_sizes[1], 
+        //                                     vector<double>(voxel_grid_sizes[2], 
+        //                                     1.0))); // initial value is 1.0 (means free voxel)
             
-            // 
-            double resolution = this->voxel_size;
-            double origine = -1.5;
-            double max_size = 1.5;
+        //     // 
+        //     double resolution = this->voxel_size;
+        //     double origine = -1.5;
+        //     double max_size = 1.5;
 
-            double rm_size = round(max_size * 2 / resolution);
+        //     double rm_size = round(max_size * 2 / resolution);
             
-            for (size_t idx = 0; idx < voxel_grid.size(); ++idx) {
-            // for(auto it=voxel_grid.begin(); it!=voxel_grid.end(); ++it){
-                // int index = std::distance(voxel_grid.begin(), it);
-                size_t x = idx / (voxel_grid_sizes[1] * voxel_grid_sizes[2]);
-                size_t y = (idx / voxel_grid_sizes[2]) % voxel_grid_sizes[1];
-                size_t z = idx % voxel_grid_sizes[2];
-                voxel_grid_data[x][y][z] = 1 - voxel_grid[idx][3];
-                // rm_data[x][y][z] = data[idx][3];
-            }
+        //     for (size_t idx = 0; idx < voxel_grid.size(); ++idx) {
+        //     // for(auto it=voxel_grid.begin(); it!=voxel_grid.end(); ++it){
+        //         // int index = std::distance(voxel_grid.begin(), it);
+        //         size_t x = idx / (voxel_grid_sizes[1] * voxel_grid_sizes[2]);
+        //         size_t y = (idx / voxel_grid_sizes[2]) % voxel_grid_sizes[1];
+        //         size_t z = idx % voxel_grid_sizes[2];
+        //         voxel_grid_data[x][y][z] = 1 - voxel_grid[idx][3];
+        //         // rm_data[x][y][z] = data[idx][3];
+        //     }
 
-            // create a rm map with only 0
-            vector<vector<vector<double>>> rm_data(rm_size, 
-                                            vector<vector<double>>(rm_size, 
-                                            vector<double>(rm_size, 
-                                            0.0))); // initial value is 0 (means no reach)
-            for(const auto &pose : data) {
-                int idx = static_cast<int> (round  (((round(pose.first[0] * 100)/100) - origine) / resolution));
-                int idy = static_cast<int> (round  (((round(pose.first[1] * 100)/100) - origine) / resolution));
-                int idz = static_cast<int> (round  (((round(pose.first[2] * 100)/100) - origine) / resolution));
-                rm_data[idx][idy][idz] = pose.second;
-                //  RCLCPP_WARN(this->get_logger(), "x: %i, y:%i, z:%i, Data:%f", idx, idy, idz, pose.second);
-            }
-
-
-            std::string dataset_id_s = std::to_string(this->dataset_id);
-
-            // Create the group structure if it does not exist
-            auto group = this->data_file_->createGroup("/group/" + dataset_id_s);
-            // create voxel map dataset
-            std::vector<size_t> dims_voxel_grid{(size_t)voxel_grid_sizes[0], (size_t)voxel_grid_sizes[1], (size_t)voxel_grid_sizes[2]};
-            DataSet dataset_voxelgrid = group.createDataSet<double>("voxel_grid", DataSpace(dims_voxel_grid));
-            dataset_voxelgrid.write(voxel_grid_data);
-            // add voxel map attribut
-            dataset_voxelgrid.createAttribute<double>("origine_x", voxel_grid_origin[0]);
-            dataset_voxelgrid.createAttribute<double>("origine_y", voxel_grid_origin[1]);
-            dataset_voxelgrid.createAttribute<double>("origine_z", voxel_grid_origin[2]);
-            dataset_voxelgrid.createAttribute<double>("voxel_size", voxel_size);
-            dataset_voxelgrid.createAttribute<double>("voxel_grid_size_x", voxel_grid_sizes[0]);
-            dataset_voxelgrid.createAttribute<double>("voxel_grid_size_y", voxel_grid_sizes[1]);
-            dataset_voxelgrid.createAttribute<double>("voxel_grid_size_z", voxel_grid_sizes[2]);
+        //     // create a rm map with only 0
+        //     vector<vector<vector<double>>> rm_data(rm_size, 
+        //                                     vector<vector<double>>(rm_size, 
+        //                                     vector<double>(rm_size, 
+        //                                     0.0))); // initial value is 0 (means no reach)
+        //     for(const auto &pose : data) {
+        //         int idx = static_cast<int> (round  (((round(pose.first[0] * 100)/100) - origine) / resolution));
+        //         int idy = static_cast<int> (round  (((round(pose.first[1] * 100)/100) - origine) / resolution));
+        //         int idz = static_cast<int> (round  (((round(pose.first[2] * 100)/100) - origine) / resolution));
+        //         rm_data[idx][idy][idz] = pose.second;
+        //         //  RCLCPP_WARN(this->get_logger(), "x: %i, y:%i, z:%i, Data:%f", idx, idy, idz, pose.second);
+        //     }
 
 
-            // Now create datasets within these groups
-            std::vector<size_t> dims_rm_grid{(size_t)rm_size, (size_t)rm_size, (size_t)rm_size};
-            DataSet dataset_data = group.createDataSet<double>("reachability_map", DataSpace(dims_rm_grid));
-            dataset_data.write(rm_data);
-            // add voxel map attribut
-            dataset_data.createAttribute<double>("origine_x", origine);
-            dataset_data.createAttribute<double>("origine_y", origine);
-            dataset_data.createAttribute<double>("origine_z", origine);
-            dataset_data.createAttribute<double>("voxel_size", resolution);
-            dataset_data.createAttribute<double>("voxel_grid_size_x", rm_size);
-            dataset_data.createAttribute<double>("voxel_grid_size_y", rm_size);
-            dataset_data.createAttribute<double>("voxel_grid_size_z", rm_size);
+        //     std::string dataset_id_s = std::to_string(this->dataset_id);
+
+        //     // Create the group structure if it does not exist
+        //     auto group = this->data_file_->createGroup("/group/" + dataset_id_s);
+        //     // create voxel map dataset
+        //     std::vector<size_t> dims_voxel_grid{(size_t)voxel_grid_sizes[0], (size_t)voxel_grid_sizes[1], (size_t)voxel_grid_sizes[2]};
+        //     DataSet dataset_voxelgrid = group.createDataSet<double>("voxel_grid", DataSpace(dims_voxel_grid));
+        //     dataset_voxelgrid.write(voxel_grid_data);
+        //     // add voxel map attribut
+        //     dataset_voxelgrid.createAttribute<double>("origine_x", voxel_grid_origin[0]);
+        //     dataset_voxelgrid.createAttribute<double>("origine_y", voxel_grid_origin[1]);
+        //     dataset_voxelgrid.createAttribute<double>("origine_z", voxel_grid_origin[2]);
+        //     dataset_voxelgrid.createAttribute<double>("voxel_size", voxel_size);
+        //     dataset_voxelgrid.createAttribute<double>("voxel_grid_size_x", voxel_grid_sizes[0]);
+        //     dataset_voxelgrid.createAttribute<double>("voxel_grid_size_y", voxel_grid_sizes[1]);
+        //     dataset_voxelgrid.createAttribute<double>("voxel_grid_size_z", voxel_grid_sizes[2]);
+
+
+        //     // Now create datasets within these groups
+        //     std::vector<size_t> dims_rm_grid{(size_t)rm_size, (size_t)rm_size, (size_t)rm_size};
+        //     DataSet dataset_data = group.createDataSet<double>("reachability_map", DataSpace(dims_rm_grid));
+        //     dataset_data.write(rm_data);
+        //     // add voxel map attribut
+        //     dataset_data.createAttribute<double>("origine_x", origine);
+        //     dataset_data.createAttribute<double>("origine_y", origine);
+        //     dataset_data.createAttribute<double>("origine_z", origine);
+        //     dataset_data.createAttribute<double>("voxel_size", resolution);
+        //     dataset_data.createAttribute<double>("voxel_grid_size_x", rm_size);
+        //     dataset_data.createAttribute<double>("voxel_grid_size_y", rm_size);
+        //     dataset_data.createAttribute<double>("voxel_grid_size_z", rm_size);
             
 
 
 
-            this->dataset_id += 1;
-            return true;
-        }
+        //     this->dataset_id += 1;
+        //     return true;
+        // }
 
         bool save_data(const std::vector<std::array<double, 4>>& reachability_map, 
                     const std::vector<std::array<double, 4>>& voxel_grid,

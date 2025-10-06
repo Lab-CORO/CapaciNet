@@ -17,34 +17,16 @@ def generate_launch_description():
         'voxel_size',
         default_value="0.08",  # Set the default value
     )
-
-
-    # Node curobo_ik
-    ik_node = Node(
-        package='curobo_ros',
-        executable='curobo_ik',
-        name='curobo_ik',
-        output='screen',
-        # parameters=[
-        #         {"voxel_size": voxel_size}
-        #     ]
+    batch_size = LaunchConfiguration('batch_size')
+    batch_size_arg = DeclareLaunchArgument(
+        'batch_size',
+        default_value="1000",  # Set the default value
     )
 
-    # Node data_gen create reachability map
-    create_reachability_map = Node(
-        package='data_generation',
-        executable='create_reachability_map',
-        name='create_reachability_map',
-        output='screen',
-        # parameters=[
-        #         {"voxel_size": voxel_size,}
-        # ],
-        
-    )
 
     return LaunchDescription([
         voxel_size_arg,
-        # ik_node, 
+        batch_size_arg,
         Node(
             package='curobo_ros',
             executable='curobo_ik',
@@ -61,6 +43,7 @@ def generate_launch_description():
         name='create_reachability_map',
         output='screen',
         parameters=[
-                {"voxel_size": voxel_size,}
+                {"voxel_size": voxel_size,
+                "batch_size": batch_size,}
         ])
         ])
