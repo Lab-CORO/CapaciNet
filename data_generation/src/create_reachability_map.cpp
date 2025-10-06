@@ -8,6 +8,7 @@
 #include <octomap/math/Utils.h>
 #include <tf2/LinearMath/Quaternion.h>
 #include <geometry_msgs/msg/pose_array.hpp>
+#include <geometry_msgs/msg/pose.hpp>
 
 #include <map>
 #include <sys/types.h>
@@ -116,6 +117,7 @@ int main(int argc, char **argv)
     octomap::point3d origin = octomap::point3d(0, 0, 0); // This point will be the base of the robot
     octomap::OcTree *tree = sd.generateBoxTree(origin, r, resolution);
     std::vector<octomap::point3d> new_data;
+    std::vector<geometry_msgs::msg::Pose> reachability_poses;
     RCLCPP_INFO(node->get_logger(), "Creating the box and discretizing with resolution: %f", resolution);
     int sphere_count = 0;
     for (octomap::OcTree::leaf_iterator it = tree->begin_leafs(max_depth), end = tree->end_leafs(); it != end; ++it)
@@ -123,9 +125,27 @@ int main(int argc, char **argv)
         sphere_count++;
     }
     new_data.reserve(sphere_count);
+
+    float radius = 0.0001;
+
     for (octomap::OcTree::leaf_iterator it = tree->begin_leafs(max_depth), end = tree->end_leafs(); it != end; ++it)
     {
-        new_data.push_back(it.getCoordinate());
+        // new_data.push_back(it.getCoordinate());
+        static std::vector<geometry_msgs::msg::Pose> poses_sphere;
+        std::vector<double> sphere_coord;
+        sd.convertPointToVector(it.getCoordinate(), sphere_coord);
+        // create a sphere in the master_ik_data
+        Sphere sphere;
+        sphere.x = utils::round_to_decimals(sphere_coord[0], 4);
+        sphere.y = utils::round_to_decimals(sphere_coord[1], 4);
+        sphere.z = utils::round_to_decimals(sphere_coord[2], 4);
+
+        // create poses of spheres exit 50 poses around a sphere pose with a raduis
+        sd.make_sphere_poses(sphere, radius, poses_sphere);
+        for (std::vector<geometry_msgs::msg::Pose>::iterator it_pose = poses_sphere.begin(); it_pose != poses_sphere.end(); ++it_pose) {
+          // the spheres_poses to poses
+          reachability_poses.push_back(*it_pose);
+        }
     }
 
     RCLCPP_INFO(node->get_logger(), "Total no of spheres now: %lu", new_data.size());
@@ -141,7 +161,6 @@ int main(int argc, char **argv)
     // corresponding sphere centers
     // If the resolution is 0.01 the programs not responds
     // TODO seperate raduise and resolutiion
-    float radius = 0.0001;
 
     VectorOfVectors sphere_coord;
     sphere_coord.resize(new_data.size());
@@ -154,21 +173,19 @@ int main(int argc, char **argv)
     // vector of 7d to save with cnpy
     std::vector<geometry_msgs::msg::Pose> poses_vector2save;
 
-    for (int i = 0; i < new_data.size(); i++)
-    {
-        RCLCPP_INFO_STREAM(node->get_logger(), "Progress: " << generateProgressBar(i, new_data.size()));
-        // bar.update();
-        static std::vector<geometry_msgs::msg::Pose> poses;
-        sd.convertPointToVector(new_data[i], sphere_coord[i]);
-        // create a sphere in the master_ik_data
-        Sphere sphere;
-        sphere.x = utils::round_to_decimals(sphere_coord[i][0], 4);
-        sphere.y = utils::round_to_decimals(sphere_coord[i][1], 4);
-        sphere.z = utils::round_to_decimals(sphere_coord[i][2], 4);
+    // Split datas to max_batch_size
+    std::vector<std::vector<geometry_msgs::msg::Pose>> batches;
+    // Set  batch_size as ros param
+    int batch_size = 0;
+    node->declare_parameter("batch_size", 1000);
+    node->get_parameter("batch_size", batch_size);
+    utils::split_data(reachability_poses, batch_size, batches);
 
-        // create poses of spheres exit 50 poses around a sphere pose with a raduis
-        sd.make_sphere_poses(sphere, radius, poses);
-        // number of point accepted for curobo
+    for (const auto &batch : batches)
+    {
+        // RCLCPP_INFO_STREAM(node->get_logger(), "Progress: " << generateProgressBar(i, new_data.size()));
+        // bar.update();
+
 
         // send all the 50 poses to curobo
         std::vector<sensor_msgs::msg::JointState> joint_states;
@@ -176,7 +193,7 @@ int main(int argc, char **argv)
 
         auto request = std::make_shared<curobo_msgs::srv::IkBatch::Request>();
 
-        request->poses = poses;
+        request->poses = batch;
         auto result_future = client_ik->async_send_request(request);
 
         if (rclcpp::spin_until_future_complete(node, result_future) == rclcpp::FutureReturnCode::SUCCESS)
@@ -197,39 +214,10 @@ int main(int argc, char **argv)
             {
                 // save the pose in vector
 
-                poses_vector2save.push_back(poses[j]);
-
-                // // create a pose in the sphere
-                // PoseOnSphere p;
-                // p.x = sphere.x;
-                // p.y = sphere.y;
-                // p.z = sphere.z;
-                // p.theta_x = utils::round_to_decimals(poses[j].orientation.x, 6);
-                // p.theta_y = utils::round_to_decimals(poses[j].orientation.y, 6);
-                // p.theta_z = utils::round_to_decimals(poses[j].orientation.z, 6);
-                // p.theta_w = utils::round_to_decimals(poses[j].orientation.w, 6);
-                // // if joint[i] is not empty add the joints to the pose
-
-                // // create a joint
-                // joint join;
-                // join.j1 = joint_states[j].position[0];
-                // join.j2 = joint_states[j].position[1];
-                // join.j3 = joint_states[j].position[2];
-                // join.j4 = joint_states[j].position[3];
-                // join.j5 = joint_states[j].position[4];
-                // join.j6 = joint_states[j].position[5];
-                // // add the joint to the pose
-                // std::vector<joint> joints = {join};
-                // p.add(joints);
-                // // add the pose to the sphere
-                // sphere.add(p);
+                poses_vector2save.push_back(batch[j]);
             }
         }
-        // //  add the sphere to the master_ik
-        // if (sphere.has_points())
-        // {
-        //     data_ik.add(sphere);
-        // }
+
     }
 
     // save vector to cnpy to the data file in data_generation ros package
