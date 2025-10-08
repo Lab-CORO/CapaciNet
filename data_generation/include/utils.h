@@ -7,8 +7,6 @@
 
 #include <cmath>
 
-#include <iostream>
-#include <fstream>
 #include <vector>
 #include <geometry_msgs/msg/pose.hpp>
 #include <iostream>
@@ -19,10 +17,23 @@
 
 #include <boost/multi_array.hpp>
 #include <highfive/highfive.hpp>
+#include "rclcpp/rclcpp.hpp"
 using namespace std;
 
     class utils {
     public:
+         struct QuantizedPoint3D {
+            int x, y, z;
+            explicit QuantizedPoint3D(double x_, double y_, double z_, double resolution = 0.01) {
+                x = static_cast<int>(std::round(x_ / resolution));
+                y = static_cast<int>(std::round(y_ / resolution));
+                z = static_cast<int>(std::round(z_ / resolution));
+            }
+            bool operator<(const QuantizedPoint3D &o) const {
+                return std::tie(x, y, z) < std::tie(o.x, o.y, o.z);
+            }
+        };
+
         static double round_to_decimals(double value, int decimals);
 
         static bool save_poses_to_file(const std::string& filename, const std::vector<geometry_msgs::msg::Pose>& poses);
@@ -31,7 +42,7 @@ using namespace std;
                                 size_t batch_size,
                                 std::vector<std::vector<geometry_msgs::msg::Pose>>& batches);
         static bool saveVecToNpz(const std::string& filename, const std::vector<std::array<double, 4>>& data);
-        static bool saveToHDF5(const std::map<std::vector<double>, double> &data,
+        static bool saveToHDF5(const std::map<utils::QuantizedPoint3D, double> &data,
                     const std::vector<std::array<double, 4>> &voxel_grid,
                     float voxel_size,
                     int (&voxel_grid_sizes)[3],

@@ -8,6 +8,9 @@
 
 // write a class to add math operation as round_to_decimals
 
+
+
+
 double utils::round_to_decimals(double value, int decimals) {
     double factor = std::pow(10, decimals);
     double res = round(value * factor) / factor;
@@ -118,7 +121,7 @@ bool utils::load_poses_from_file(const std::string& filename, std::vector<geomet
     return true;
 }
 
-bool utils::saveToHDF5(const std::map<std::vector<double>, double> &data,
+bool utils::saveToHDF5(const std::map<utils::QuantizedPoint3D, double> &data,
             const std::vector<std::array<double, 4>> &voxel_grid,
             float voxel_size,
             int (&voxel_grid_sizes)[3],
@@ -129,47 +132,36 @@ bool utils::saveToHDF5(const std::map<std::vector<double>, double> &data,
         {
             using namespace HighFive;
 
-            // size_t data_size = data.size();
-            // size_t voxel_grid_size = voxel_grid.size();
-
-            // std::vector<size_t> dims{data_size, 4};
             
             vector<vector<vector<double>>> voxel_grid_data(voxel_grid_sizes[0], 
                                             vector<vector<double>>(voxel_grid_sizes[1], 
                                             vector<double>(voxel_grid_sizes[2], 
                                             1.0))); // initial value is 1.0 (means free voxel)
             
-            // 
             double resolution = voxel_size;
             double origine = voxel_grid_origin[0];
-            // double max_size = 1.5;
 
-            double rm_size = voxel_grid_sizes[0]; //round(max_size * 2 / resolution);
+
+            double rm_size = voxel_grid_sizes[0]; 
             
             for (size_t idx = 0; idx < voxel_grid.size(); ++idx) {
-            // for(auto it=voxel_grid.begin(); it!=voxel_grid.end(); ++it){
-                // int index = std::distance(voxel_grid.begin(), it);
                 size_t x = idx / (voxel_grid_sizes[1] * voxel_grid_sizes[2]);
                 size_t y = (idx / voxel_grid_sizes[2]) % voxel_grid_sizes[1];
                 size_t z = idx % voxel_grid_sizes[2];
                 voxel_grid_data[x][y][z] = 1 - voxel_grid[idx][3];
-                // rm_data[x][y][z] = data[idx][3];
             }
-
+            
             // create a rm map with only 0
             vector<vector<vector<double>>> rm_data(rm_size, 
                                             vector<vector<double>>(rm_size, 
                                             vector<double>(rm_size, 
                                             0.0))); // initial value is 0 (means no reach)
             for(const auto &pose : data) {
-                int idx = static_cast<int> (round  (((round(pose.first[0] * 100)/100) - origine) / resolution));
-                int idy = static_cast<int> (round  (((round(pose.first[1] * 100)/100) - origine) / resolution));
-                int idz = static_cast<int> (round  (((round(pose.first[2] * 100)/100) - origine) / resolution));
+                int idx = static_cast<int> (pose.first.x + static_cast<int>(rm_size / 2));
+                int idy = static_cast<int> (pose.first.y + static_cast<int>(rm_size / 2));
+                int idz = static_cast<int> (pose.first.z + static_cast<int>(rm_size / 2));
                 rm_data[idx][idy][idz] = pose.second;
-                //  RCLCPP_WARN(this->get_logger(), "x: %i, y:%i, z:%i, Data:%f", idx, idy, idz, pose.second);
             }
-
-
             std::string dataset_id_s = std::to_string(dataset_id);
 
             // Create the group structure if it does not exist

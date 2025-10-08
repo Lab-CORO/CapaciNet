@@ -60,7 +60,7 @@ namespace cb_data_generator
             utils::load_poses_from_file(ament_index_cpp::get_package_share_directory("data_generation") + "/data" + "/master_ik_data" + resolution_string.str() + ".npz", this->raw_datas);
             for (const auto& data_pt : this->raw_datas) {
                 // on prend le risque de la dedondance mais au piure on fera un round sur les coords x y z
-                std::vector<double> pt = {round(data_pt.position.x*100)/100, round(data_pt.position.y *100)/100, round(data_pt.position.z*100)/100};
+                utils::QuantizedPoint3D pt(data_pt.position.x, data_pt.position.y, data_pt.position.z, this->voxel_size);
                 this->map_rm[pt] = 0.0;
             }
 
@@ -73,8 +73,6 @@ namespace cb_data_generator
 
                 return response;
             };
-
-
 
             client_ik = this->create_client<curobo_msgs::srv::IkBatch>("/curobo_ik/ik_batch_poses", rmw_qos_profile_services_default,
                                                                   client_cb_group_);
@@ -126,10 +124,6 @@ namespace cb_data_generator
             RCLCPP_WARN(this->get_logger(), "Data size: %i", this->raw_datas.size());
             // iterate all batches
 
-            // std::vector<std::array<double, 4>> data_result;
-            // data_result.reserve(this->raw_datas.size());
-
-            double sphere[4] = {this->raw_datas[0].position.x, this->raw_datas[0].position.y, this->raw_datas[0].position.z, 0.0};
             for (const auto &batch : batches)
             {
                 // send the batch to robot ik
@@ -162,7 +156,7 @@ namespace cb_data_generator
                 for (size_t i = 0; i < joint_states.size(); ++i)
                 {
                     // get the x, y, z and if joint state valide, add 1 to score 
-                    std::vector<double> pt = {round(batch[i].position.x*100)/100, round(batch[i].position.y*100)/100, round(batch[i].position.z*100)/100};
+                    utils::QuantizedPoint3D pt(batch[i].position.x, batch[i].position.y, batch[i].position.z, resolution);
                     
                     if (joint_states_valid[i].data)
                     {
@@ -265,124 +259,7 @@ namespace cb_data_generator
                 return;
             }
         }
-        // bool saveToHDF5(const std::map<std::vector<double>, double> &data,
-        //                 const std::vector<std::array<double, 4>> &voxel_grid,
-        //                 float voxel_size,
-        //                 int (&voxel_grid_sizes)[3],
-        //                 double (&voxel_grid_origin)[3])
-        // {
-        //     using namespace HighFive;
 
-        //     // size_t data_size = data.size();
-        //     // size_t voxel_grid_size = voxel_grid.size();
-
-        //     // std::vector<size_t> dims{data_size, 4};
-            
-        //     vector<vector<vector<double>>> voxel_grid_data(voxel_grid_sizes[0], 
-        //                                     vector<vector<double>>(voxel_grid_sizes[1], 
-        //                                     vector<double>(voxel_grid_sizes[2], 
-        //                                     1.0))); // initial value is 1.0 (means free voxel)
-            
-        //     // 
-        //     double resolution = this->voxel_size;
-        //     double origine = -1.5;
-        //     double max_size = 1.5;
-
-        //     double rm_size = round(max_size * 2 / resolution);
-            
-        //     for (size_t idx = 0; idx < voxel_grid.size(); ++idx) {
-        //     // for(auto it=voxel_grid.begin(); it!=voxel_grid.end(); ++it){
-        //         // int index = std::distance(voxel_grid.begin(), it);
-        //         size_t x = idx / (voxel_grid_sizes[1] * voxel_grid_sizes[2]);
-        //         size_t y = (idx / voxel_grid_sizes[2]) % voxel_grid_sizes[1];
-        //         size_t z = idx % voxel_grid_sizes[2];
-        //         voxel_grid_data[x][y][z] = 1 - voxel_grid[idx][3];
-        //         // rm_data[x][y][z] = data[idx][3];
-        //     }
-
-        //     // create a rm map with only 0
-        //     vector<vector<vector<double>>> rm_data(rm_size, 
-        //                                     vector<vector<double>>(rm_size, 
-        //                                     vector<double>(rm_size, 
-        //                                     0.0))); // initial value is 0 (means no reach)
-        //     for(const auto &pose : data) {
-        //         int idx = static_cast<int> (round  (((round(pose.first[0] * 100)/100) - origine) / resolution));
-        //         int idy = static_cast<int> (round  (((round(pose.first[1] * 100)/100) - origine) / resolution));
-        //         int idz = static_cast<int> (round  (((round(pose.first[2] * 100)/100) - origine) / resolution));
-        //         rm_data[idx][idy][idz] = pose.second;
-        //         //  RCLCPP_WARN(this->get_logger(), "x: %i, y:%i, z:%i, Data:%f", idx, idy, idz, pose.second);
-        //     }
-
-
-        //     std::string dataset_id_s = std::to_string(this->dataset_id);
-
-        //     // Create the group structure if it does not exist
-        //     auto group = this->data_file_->createGroup("/group/" + dataset_id_s);
-        //     // create voxel map dataset
-        //     std::vector<size_t> dims_voxel_grid{(size_t)voxel_grid_sizes[0], (size_t)voxel_grid_sizes[1], (size_t)voxel_grid_sizes[2]};
-        //     DataSet dataset_voxelgrid = group.createDataSet<double>("voxel_grid", DataSpace(dims_voxel_grid));
-        //     dataset_voxelgrid.write(voxel_grid_data);
-        //     // add voxel map attribut
-        //     dataset_voxelgrid.createAttribute<double>("origine_x", voxel_grid_origin[0]);
-        //     dataset_voxelgrid.createAttribute<double>("origine_y", voxel_grid_origin[1]);
-        //     dataset_voxelgrid.createAttribute<double>("origine_z", voxel_grid_origin[2]);
-        //     dataset_voxelgrid.createAttribute<double>("voxel_size", voxel_size);
-        //     dataset_voxelgrid.createAttribute<double>("voxel_grid_size_x", voxel_grid_sizes[0]);
-        //     dataset_voxelgrid.createAttribute<double>("voxel_grid_size_y", voxel_grid_sizes[1]);
-        //     dataset_voxelgrid.createAttribute<double>("voxel_grid_size_z", voxel_grid_sizes[2]);
-
-
-        //     // Now create datasets within these groups
-        //     std::vector<size_t> dims_rm_grid{(size_t)rm_size, (size_t)rm_size, (size_t)rm_size};
-        //     DataSet dataset_data = group.createDataSet<double>("reachability_map", DataSpace(dims_rm_grid));
-        //     dataset_data.write(rm_data);
-        //     // add voxel map attribut
-        //     dataset_data.createAttribute<double>("origine_x", origine);
-        //     dataset_data.createAttribute<double>("origine_y", origine);
-        //     dataset_data.createAttribute<double>("origine_z", origine);
-        //     dataset_data.createAttribute<double>("voxel_size", resolution);
-        //     dataset_data.createAttribute<double>("voxel_grid_size_x", rm_size);
-        //     dataset_data.createAttribute<double>("voxel_grid_size_y", rm_size);
-        //     dataset_data.createAttribute<double>("voxel_grid_size_z", rm_size);
-            
-
-
-
-        //     this->dataset_id += 1;
-        //     return true;
-        // }
-
-        bool save_data(const std::vector<std::array<double, 4>>& reachability_map, 
-                    const std::vector<std::array<double, 4>>& voxel_grid,
-                    float voxel_size,
-                    int (&voxel_grid_sizes)[3],
-                    double (&voxel_grid_origin)[3])
-            {
-            // create a folder name=id in the main folder
-            std::string dataset_id_s = std::to_string(this->dataset_id);
-            std::string file_path =  this->data_file_path + "/"  + dataset_id_s;
-            if(mkdir(file_path.c_str(), 0777) == -1){
-                // ros2 print 
-                RCLCPP_WARN(this->get_logger(), "issue at mkdir of data");
-            }
-
-            // create reachability map data
-            utils::saveVecToNpz(std::string(file_path + "/reachability_map.npz"), reachability_map);
-            // create voxel data
-            utils::saveVecToNpz(std::string(file_path + "/voxel_grid.npz"), voxel_grid);
-            
-            // create info.json
-            json j;
-            j["resolution"] = voxel_size;
-            j["voxel_grid_sizes"] = voxel_grid_sizes;
-            j["voxel_grid_origin"] = voxel_grid_origin;
-            std::ofstream file(file_path + "/info.json");
-            file << j.dump(4);
-            file.close();
-            this->dataset_id += 1;
-            return true;
-        }
-        
 
     private:
         rclcpp::CallbackGroup::SharedPtr client_cb_group_;
@@ -399,7 +276,7 @@ namespace cb_data_generator
         std::string data_file_path;
         int dataset_id;
         float voxel_size;
-        std::map<std::vector<double>, double> map_rm;
+        std::map<utils::QuantizedPoint3D, double> map_rm;
         std::vector<geometry_msgs::msg::Pose>raw_datas;
     };
 }

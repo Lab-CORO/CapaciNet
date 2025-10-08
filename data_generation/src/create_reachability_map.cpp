@@ -37,17 +37,6 @@ using namespace std::chrono_literals;
 
 
 
-struct QuantizedPoint3D {
-    int x, y, z;
-    explicit QuantizedPoint3D(double x_, double y_, double z_, double resolution = 0.01) {
-        x = static_cast<int>(std::round(x_ / resolution));
-        y = static_cast<int>(std::round(y_ / resolution));
-        z = static_cast<int>(std::round(z_ / resolution));
-    }
-    bool operator<(const QuantizedPoint3D &o) const {
-        return std::tie(x, y, z) < std::tie(o.x, o.y, o.z);
-    }
-};
 
 
 
@@ -185,11 +174,11 @@ int main(int argc, char **argv)
     MultiVector pose_col;
     pose_col.reserve(new_data.size() * 50);
     MasterIkData data_ik;
-    progressbar bar(new_data.size());
+    
 
     // vector of 7d to save with cnpy
     std::vector<geometry_msgs::msg::Pose> poses_vector2save;
-    std::map<std::vector<double>, double> map_rm;
+    std::map<utils::QuantizedPoint3D, double> map_rm;
 
     // Split datas to max_batch_size
     std::vector<std::vector<geometry_msgs::msg::Pose>> batches;
@@ -199,10 +188,13 @@ int main(int argc, char **argv)
     node->get_parameter("batch_size", batch_size);
     utils::split_data(reachability_poses, batch_size, batches);
     RCLCPP_INFO(node->get_logger(), "numbre de batch: %d", batches.size());
+    progressbar bar(batches.size());
+    int progresse_index = 0;
     for (const auto &batch : batches)
     {
-        // RCLCPP_INFO_STREAM(node->get_logger(), "Progress: " << generateProgressBar(i, new_data.size()));
-        // bar.update();
+        RCLCPP_INFO_STREAM(node->get_logger(), "Progress: " << generateProgressBar(progresse_index, batches.size()));
+        progresse_index ++;
+        bar.update();
 
 
         // send all the 50 poses to curobo
@@ -230,17 +222,15 @@ int main(int argc, char **argv)
         {
             if (joint_states_valid[j].data)
             {              
-
-                QuantizedPoint3D pt(batch[j].position.x, batch[j].position.y, batch[j].position.z, resolution);
+                utils::QuantizedPoint3D pt(batch[j].position.x, batch[j].position.y, batch[j].position.z, resolution);
                 // save the pose in vector
-
                 poses_vector2save.push_back(batch[j]);
                 map_rm[pt] += 1.0 / 50.0;
             }
         }
 
     }
-
+    RCLCPP_INFO(node->get_logger(), "Compute finish, saving");
     // save vector to cnpy to the data file in data_generation ros package
     std::stringstream resolution_string;
     resolution_string << resolution;              // appending the float value to the streamclass
@@ -254,17 +244,16 @@ int main(int argc, char **argv)
                 HighFive::File::ReadWrite | HighFive::File::Create);
 
     std::vector<std::array<double, 4>> voxel_map = {};
-    double rm_size = round(r * 2 / resolution);
+    int rm_size = static_cast<int>(std::round(r / resolution) * 2);
     int voxel_grid_sizes[3] = {rm_size, rm_size, rm_size};
     double voxel_grid_origin[3] = {-r, -r, -r}; 
-
+    RCLCPP_INFO(node->get_logger(), "voxel grid size = %d", rm_size);
     utils::saveToHDF5(map_rm, voxel_map, resolution, voxel_grid_sizes, voxel_grid_origin, data_file_, 0);
     
     data_file_->flush();
+    RCLCPP_INFO(node->get_logger(), "HDF5 file saved");
     
     utils::save_poses_to_file(std::string("/home/ros2_ws/src/") +  "/master_ik_data" + resolution_string.str() + ".npz", poses_vector2save);
-    // data_ik.write_data(std::string("/home/ros2_ws/src/capacitynet")+ "/data"  + "/master_ik_data" + result + ".json");
-        // ament_index_cpp::get_package_share_directory("data_generation") + "/data"  + "/master_ik_data" + result + ".json");
     // get time
     rclcpp::Time end = node->get_clock()->now();
     rclcpp::Duration duration = end - begin;
