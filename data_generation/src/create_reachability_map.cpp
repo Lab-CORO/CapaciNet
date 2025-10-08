@@ -35,6 +35,23 @@ typedef std::vector<std::pair<std::vector<double>, const std::vector<double> *>>
 
 using namespace std::chrono_literals;
 
+
+
+struct QuantizedPoint3D {
+    int x, y, z;
+    explicit QuantizedPoint3D(double x_, double y_, double z_, double resolution = 0.01) {
+        x = static_cast<int>(std::round(x_ / resolution));
+        y = static_cast<int>(std::round(y_ / resolution));
+        z = static_cast<int>(std::round(z_ / resolution));
+    }
+    bool operator<(const QuantizedPoint3D &o) const {
+        return std::tie(x, y, z) < std::tie(o.x, o.y, o.z);
+    }
+};
+
+
+
+
 std::string generateProgressBar(int current, int total, int bar_width = 50)
 {
   // Ensure we don't have a division by zero
@@ -181,7 +198,7 @@ int main(int argc, char **argv)
     node->declare_parameter("batch_size", 1000);
     node->get_parameter("batch_size", batch_size);
     utils::split_data(reachability_poses, batch_size, batches);
-
+    RCLCPP_INFO(node->get_logger(), "numbre de batch: %d", batches.size());
     for (const auto &batch : batches)
     {
         // RCLCPP_INFO_STREAM(node->get_logger(), "Progress: " << generateProgressBar(i, new_data.size()));
@@ -211,9 +228,10 @@ int main(int argc, char **argv)
 
         for (int j = 0; j < joint_states.size(); j++)
         {
-            std::vector<double> pt = {round(batch[j].position.x*100)/100, round(batch[j].position.y*100)/100, round(batch[j].position.z*100)/100};
             if (joint_states_valid[j].data)
-            {
+            {              
+
+                QuantizedPoint3D pt(batch[j].position.x, batch[j].position.y, batch[j].position.z, resolution);
                 // save the pose in vector
 
                 poses_vector2save.push_back(batch[j]);

@@ -36,13 +36,13 @@ public:
     ReachabilityMapVizualisation()
         : Node("reachability_map_vizualisation_node")
     {
-        this->declare_parameter("file_name", "/home/ros2_ws/install/data_generation/share/data_generation/data/master_ik_data0.5.npz");
+        this->declare_parameter("file_name", "/home/ros2_ws/install/data_generation/share/data_generation/data/master_ik_data0.1.npz");
         this->file_name = this->get_parameter("file_name").as_string();
 
         // RCLCPP_INFO(node->get_logger(), "msg created");
         publisher_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("visualization_marker_array", 10);
         // timer_ = this->create_wall_timer(10s, std::bind(&ReachabilityMapVizualisation::timer_callback, this));
-        this->data_file_path = ament_index_cpp::get_package_share_directory("data_generation") + "/data/" + "master_reachability_map" + ".h5";
+        this->data_file_path = ament_index_cpp::get_package_share_directory("data_generation") + "/data/" + "master_ik_data0.1" + ".h5";
         // mkdir(this->data_file_path.c_str(), 0777);
         this->data_file_ = std::make_shared<HighFive::File>(
             this->data_file_path,
@@ -58,7 +58,7 @@ public:
     {
         std::vector<geometry_msgs::msg::Pose> data;
 
-        utils::load_poses_from_file(ament_index_cpp::get_package_share_directory("data_generation") + "/data" + "/master_ik_data" + "0.02" + ".npz", data);
+        utils::load_poses_from_file(ament_index_cpp::get_package_share_directory("data_generation") + "/data" + "/master_ik_data" + "0.1" + ".npz", data);
 
         std::map<std::vector<double>, double> map_rm;
 
