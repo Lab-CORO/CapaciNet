@@ -253,7 +253,7 @@ int main(int argc, char **argv)
     data_file_->flush();
     RCLCPP_INFO(node->get_logger(), "HDF5 file saved");
     
-    utils::save_poses_to_file(std::string("/home/ros2_ws/src/") +  "/master_ik_data" + resolution_string.str() + ".npz", poses_vector2save);
+    utils::save_poses_to_file(ament_index_cpp::get_package_share_directory("data_generation") + "/data/" +  "/master_ik_data" + resolution_string.str() + ".npz", poses_vector2save);
     // get time
     rclcpp::Time end = node->get_clock()->now();
     rclcpp::Duration duration = end - begin;
