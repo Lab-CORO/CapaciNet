@@ -23,6 +23,13 @@
 #include <time.h>
 #include <filesystem>
 
+
+#include <highfive/H5File.hpp>
+
+#include <highfive/highfive.hpp>
+
+using namespace HighFive;
+
 // --- MultiMapPtr : mapping entre points de base et poses accessibles
 typedef std::multimap<const geometry_msgs::msg::Point*, const geometry_msgs::msg::Pose*> MultiMapPosePtr;
 
@@ -47,21 +54,16 @@ int main(int argc, char **argv)
   int count = 0;
   while (rclcpp::ok())
   {
-    // std::vector<geometry_msgs::msg::Pose> pose_col_filter;
     std::vector<geometry_msgs::msg::Pose> pose_col_filter;
     MapPointDoublePtr sphere_col;
-    float res = 0.1;
 
-    // hdf5_dataset::Hdf5Dataset h5file(input_FILE);
-    // h5file.open();
-    // h5file.loadMapsFromDataset(pose_col_filter, sphere_col, res);
     utils::load_poses_from_file("/home/ros2_ws/src/CapaciNet/data_generation/data/master_ik_data0.5.npz", pose_col_filter);
 
     // Create Inverse Reachability map
     unsigned char max_depth = 16;
     unsigned char minDepth = 0;
     float size_of_box = 1.5;
-    float resolution = 0.1;
+    float resolution = 0.3;
     sphere_discretization::SphereDiscretization sd;
 
     octomap::point3d origin = octomap::point3d(0, 0, 0);
@@ -129,8 +131,7 @@ int main(int argc, char **argv)
     pcl::octree::OctreePointCloudSearch<pcl::PointXYZ> octree(resolution);
     octree.setInputCloud(cloud);
     octree.addPointsFromInputCloud();
-    // apres ici
-// RCLCPP_INFO(node->get_logger(), "Number of voxels:");
+
     for (size_t i = 0; i < new_data.size(); i++)
     {
       pcl::PointXYZ search_point;
@@ -170,24 +171,35 @@ int main(int argc, char **argv)
         }
       }
     }
-// avanrt ICI
-    MapPointDoublePtr sphere_color;
+    std::map<utils::QuantizedPoint3D, double> IRM;
     for (MultiMapPosePtr::iterator it = base_trns_col.begin(); it != base_trns_col.end(); ++it)
-    {
-      const geometry_msgs::msg::Point* sphere_coord = it->first;
-      float d = (float(base_trns_col.count(sphere_coord)) / pose.size()) * 100;
-      sphere_color.insert(std::make_pair(it->first, double(d)));
+    {      
+      utils::QuantizedPoint3D sphere_coord(it->first->x, it->first->y, it->first->z, resolution);
+      float d = (float(base_trns_col.count(it->first)) / pose.size()) * 100;
+      IRM[sphere_coord] = d;
     }
 
     RCLCPP_INFO(node->get_logger(), "Number of Spheres in RM: %lu", sphere_col.size());
-    RCLCPP_INFO(node->get_logger(), "Number of Spheres in IRM: %lu", sphere_color.size());
 
     RCLCPP_INFO(node->get_logger(), 
       "All the poses have been processed. Now saving data to an inverse Reachability Map.");
 
-    // hdf5_dataset::Hdf5Dataset irm_h5(filename);
-    // irm_h5.saveReachMapsToDataset(base_trns_col, sphere_color, res);
-
+    std::vector<std::array<double, 4>> voxel_grid = {};
+    std::string data_file_path = "/home/ros2_ws/src/CapaciNet/data_generation/data/IRM.h5";
+    std::shared_ptr<HighFive::File> data_file_ = std::make_shared<HighFive::File>(
+                data_file_path,
+                HighFive::File::ReadWrite | HighFive::File::Create);
+    int voxel_grid_sizes[3] = {14, 14, 14};
+    double voxel_grid_origin[3] = {-1.5, -1.5, -1.5};
+    // load IRM
+    utils::saveToHDF5(IRM,
+            voxel_grid,
+            resolution,
+            voxel_grid_sizes,
+            voxel_grid_origin,
+            data_file_,
+            0
+            );
     time(&finish);
     double dif = difftime(finish, startit);
     RCLCPP_INFO(node->get_logger(), "Elapsed time is %.2lf seconds.", dif);
