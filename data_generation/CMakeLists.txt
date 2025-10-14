@@ -46,12 +46,12 @@ set(dependencies
 
 ament_package()
 
+### create_reachability_map ###
 add_executable(create_reachability_map
         src/create_reachability_map.cpp
         include/sphere_discretization.h
         src/sphere_discretization.cpp
         include/progressbar.hpp
-        include/json.hpp
         include/utils.h
         src/utils.cpp
 
@@ -63,16 +63,35 @@ target_link_libraries(create_reachability_map
                       ${HDF5_LIBRARIES}
                       ${HighFive_LIBRARIES}
                     )
-#ament_target_dependencies(create_reachability_map rclcpp ${OCTOMAP_LIBRARIES} geometry_msgs tf2_geometry_msgs pcl_ros Eigen3)
 
 ament_target_dependencies(create_reachability_map rclcpp geometry_msgs curobo_msgs tf2_geometry_msgs pcl_ros Eigen3)
 
+### create_inverse_reachability_map ###
+add_executable(create_inverse_reachability_map
+        src/create_inverse_reachability_map.cpp
+        include/sphere_discretization.h
+        src/sphere_discretization.cpp
+        include/progressbar.hpp
+        include/utils.h
+        src/utils.cpp
+
+)
+target_include_directories(create_inverse_reachability_map PUBLIC ${OCTOMAP_INCLUDE_DIRS})
+target_link_libraries(create_inverse_reachability_map 
+                      ${OCTOMAP_LIBRARIES}
+                      ${rclcpp_LIBRARIES}
+                      ${HDF5_LIBRARIES}
+                      ${HighFive_LIBRARIES}
+                    )
+
+ament_target_dependencies(create_inverse_reachability_map rclcpp geometry_msgs curobo_msgs tf2_geometry_msgs pcl_ros Eigen3)
+
+### generate_data ###
 add_executable(generate_data
         src/data_generator.cpp
         include/sphere_discretization.h
         src/sphere_discretization.cpp
         include/progressbar.hpp
-        include/json.hpp
         include/utils.h
         src/utils.cpp
 
@@ -87,10 +106,10 @@ target_link_libraries(generate_data
   ${HighFive_LIBRARIES}
 )
 
+### reachability_map_viz (npz to h5) ###
 add_executable(reachability_map_viz
         src/reachability_map_viz.cpp
         include/progressbar.hpp
-        include/json.hpp
         include/utils.h
         src/utils.cpp
 
@@ -105,7 +124,7 @@ target_link_libraries(reachability_map_viz
 
 ament_target_dependencies(reachability_map_viz rclcpp geometry_msgs visualization_msgs curobo_msgs tf2_geometry_msgs pcl_ros Eigen3)
 
-# Add executable for scene manager
+### Add executable for scene manager
 add_executable(scene_manager
                 src/scene_manager.cpp
 )
@@ -114,6 +133,7 @@ target_link_libraries(scene_manager)
 ament_target_dependencies(scene_manager rclcpp std_srvs curobo_msgs)
 
 
+### Add executable for obstacle_adder
 
 add_executable(obstacle_adder
         src/obstacle_adder.cpp
@@ -136,6 +156,7 @@ include_directories(
 
 install(TARGETS
     create_reachability_map
+    create_inverse_reachability_map
     reachability_map_viz
     generate_data
     obstacle_adder
