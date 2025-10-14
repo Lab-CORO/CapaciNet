@@ -8,14 +8,11 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <fstream>
-#include "json.hpp"
-#include "robot.h"
-// #include "./master_ik_data.h"
-#include "../include/robot.h"
-#include "../include/master_ik_data.h"
 #include "../include/utils.h"
 #include "curobo_msgs/srv/generate_rm.hpp"
 #include <curobo_msgs/srv/get_voxel_grid.hpp>
+#include "curobo_msgs/srv/ik_batch.hpp"
+
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <ctime>
 
@@ -74,11 +71,11 @@ namespace cb_data_generator
                 return response;
             };
 
-            client_ik = this->create_client<curobo_msgs::srv::IkBatch>("/curobo_ik/ik_batch_poses", rmw_qos_profile_services_default,
+            this->client_ik = this->create_client<curobo_msgs::srv::IkBatch>("/curobo_ik/ik_batch_poses", rmw_qos_profile_services_default,
                                                                   client_cb_group_);
             client_voxel_grid = this->create_client<curobo_msgs::srv::GetVoxelGrid>("/curobo_ik/get_voxel_grid", rmw_qos_profile_services_default,
                                                                                     client_cb_group_);
-            while (!client_ik->wait_for_service(std::chrono::seconds(5)))
+            while (!this->client_ik->wait_for_service(std::chrono::seconds(5)))
             {
                 if (!rclcpp::ok()) {
                     RCLCPP_ERROR(this->get_logger(), "client interrupted while waiting for service to appear.");
@@ -133,7 +130,7 @@ namespace cb_data_generator
                 auto request = std::make_shared<curobo_msgs::srv::IkBatch::Request>();
 
                 request->poses = batch;
-                auto result_future = client_ik->async_send_request(request);
+                auto result_future = this->client_ik->async_send_request(request);
 
                 std::future_status status = result_future.wait_for(10s); // timeout to guarantee a graceful finish
                 if (status == std::future_status::ready)

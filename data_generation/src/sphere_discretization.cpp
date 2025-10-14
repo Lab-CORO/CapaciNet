@@ -2,7 +2,6 @@
 
 namespace sphere_discretization
 {
-// SphereDiscretization::SphereDiscretization(){}
 
     octomap::OcTree* SphereDiscretization::generateSphereTree(const octomap::point3d& origin, float radius, float resolution)
     {
@@ -92,7 +91,7 @@ namespace sphere_discretization
     }
 
 
-    void SphereDiscretization::make_sphere_poses(const Sphere &origin, double r, std::vector< geometry_msgs::msg::Pose >& pose_Col)
+    void SphereDiscretization::make_sphere_poses(const geometry_msgs::msg::Point &origin, double r, std::vector< geometry_msgs::msg::Pose >& pose_Col)
     {
         const double DELTA = M_PI / 5.;
         const unsigned MAX_INDEX = (2 * 5 * 5);

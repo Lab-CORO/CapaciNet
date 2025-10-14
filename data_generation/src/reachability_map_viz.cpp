@@ -5,15 +5,11 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/publisher.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
-#include "../include/json.hpp"
 #include <std_msgs/msg/string.hpp>
-using json = nlohmann::json;
 #include <fstream>
 #include <string>
 #include "../include/utils.h"
 #include <ament_index_cpp/get_package_share_directory.hpp>
-
-using json = nlohmann::json;
 #include <chrono>
 #include <functional>
 #include <string>

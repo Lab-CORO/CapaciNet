@@ -8,6 +8,7 @@
 #include <tf2/LinearMath/Quaternion.h>
 #include <geometry_msgs/msg/pose_array.hpp>
 #include <geometry_msgs/msg/pose.hpp>
+#include <geometry_msgs/msg/point.hpp>
 
 #include <map>
 #include <sys/types.h>
@@ -20,10 +21,10 @@
 #include <ament_index_cpp/get_package_share_directory.hpp>
 
 #include "../include/progressbar.hpp"
-
-#include "../include/master_ik_data.h"
-#include "../include/robot.h"
 #include "../include/utils.h"
+
+#include "curobo_msgs/srv/ik_batch.hpp"
+
 
 typedef std::multimap<const std::vector<double> *, const std::vector<double> *> MultiMapPtr;
 typedef std::map<const std::vector<double> *, double> MapVecDoublePtr;
@@ -141,7 +142,7 @@ int main(int argc, char **argv)
         std::vector<double> sphere_coord;
         sd.convertPointToVector(it.getCoordinate(), sphere_coord);
         // create a sphere in the master_ik_data
-        Sphere sphere;
+        geometry_msgs::msg::Point sphere;
         sphere.x = utils::round_to_decimals(sphere_coord[0], 4);
         sphere.y = utils::round_to_decimals(sphere_coord[1], 4);
         sphere.z = utils::round_to_decimals(sphere_coord[2], 4);
@@ -173,7 +174,6 @@ int main(int argc, char **argv)
 
     MultiVector pose_col;
     pose_col.reserve(new_data.size() * 50);
-    MasterIkData data_ik;
     
 
     // vector of 7d to save with cnpy

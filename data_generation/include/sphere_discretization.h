@@ -16,12 +16,7 @@
 
 #include "utils.h"
 
-// #include <pcl_ros/point_cloud.hpp>
-// #include <pcl/point_types.hpp>
-// #include <pcl_ros/surface/convex_hull.hpp>
-// #include <pcl_ros/transforms.hpp>
-//#include <pcl/segmentation/extract_polygonal_prism_data.h>
-#include "../include/master_ik_data.h"
+
 namespace sphere_discretization
 {
     class SphereDiscretization
@@ -44,7 +39,7 @@ namespace sphere_discretization
         octomap::Pointcloud make_sphere_points(const octomap::point3d& origin, double r);
 
         //! Creating a sphere and and create poses on the outer sphere and return vector of poses
-        void make_sphere_poses(const Sphere &origin, double r, std::vector< geometry_msgs::msg::Pose >& pose_Col);
+        void make_sphere_poses(const geometry_msgs::msg::Point &origin, double r, std::vector< geometry_msgs::msg::Pose >& pose_Col);
 
         //! Creating random doubles
         double irand(int min, int max);

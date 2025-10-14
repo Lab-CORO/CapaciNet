@@ -51,11 +51,7 @@ add_executable(create_reachability_map
         include/sphere_discretization.h
         src/sphere_discretization.cpp
         include/progressbar.hpp
-        src/master_ik_data.cpp
-        include/master_ik_data.h
         include/json.hpp
-        # include/robot.h
-        # src/robot.cpp
         include/utils.h
         src/utils.cpp
 
@@ -76,11 +72,7 @@ add_executable(generate_data
         include/sphere_discretization.h
         src/sphere_discretization.cpp
         include/progressbar.hpp
-        src/master_ik_data.cpp
-        include/master_ik_data.h
         include/json.hpp
-        # include/robot.h
-        # src/robot.cpp
         include/utils.h
         src/utils.cpp
 
@@ -95,27 +87,10 @@ target_link_libraries(generate_data
   ${HighFive_LIBRARIES}
 )
 
-add_executable(visualize_dataset
-        src/visualize_dataset.cpp
-)
-target_include_directories(visualize_dataset PUBLIC)
-# target_link_libraries(visualize_dataset ${OCTOMAP_LIBRARIES})
-ament_target_dependencies(visualize_dataset rclcpp std_srvs visualization_msgs geometry_msgs curobo_msgs tf2_geometry_msgs pcl_ros Eigen3)
-# Lier les bibliothèques nécessaires
-target_link_libraries(visualize_dataset
-  ${rclcpp_LIBRARIES}
-  ${HDF5_LIBRARIES}
-  ${HighFive_LIBRARIES}
-)
-
 add_executable(reachability_map_viz
         src/reachability_map_viz.cpp
         include/progressbar.hpp
-        src/master_ik_data.cpp
-        include/master_ik_data.h
         include/json.hpp
-        # include/robot.h
-        # src/robot.cpp
         include/utils.h
         src/utils.cpp
 
@@ -159,27 +134,11 @@ include_directories(
 
 
 
-# Ajouter l'exécutable
-add_executable(marker_voxel_grid src/marker_voxel_grid.cpp)
-
-# Lier les bibliothèques nécessaires
-ament_target_dependencies(marker_voxel_grid
-  rclcpp
-  visualization_msgs
-)
-
-# Lier Open3D
-target_link_libraries(marker_voxel_grid
-  ${Open3D_LIBRARIES}
-)
-
 install(TARGETS
     create_reachability_map
     reachability_map_viz
     generate_data
-    marker_voxel_grid
     obstacle_adder
-    visualize_dataset
     scene_manager
     DESTINATION lib/${PROJECT_NAME}
 
