@@ -10,7 +10,6 @@
 
 #include "../include/sphere_discretization.h"
 #include "../include/utils.h"
-// #include "map_creator/msg/work_space.hpp"
 
 #include <tf2/LinearMath/Transform.h>
 #include <tf2/LinearMath/Quaternion.h>
