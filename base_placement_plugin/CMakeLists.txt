@@ -80,12 +80,12 @@ qt5_wrap_ui(UIC_FILES
 ## Source files
 set(SOURCE_FILES
   src/place_base.cpp
-#   src/add_way_point.cpp
+  src/add_way_point.cpp
   src/add_robot_base.cpp
   src/create_marker.cpp
-#   src/point_tree_item.cpp
-#   src/point_tree_model.cpp
-#   src/widgets/base_placement_widget.cpp
+  src/point_tree_item.cpp
+  src/point_tree_model.cpp
+  src/widgets/base_placement_widget.cpp
   ${UIC_FILES}
 )
 

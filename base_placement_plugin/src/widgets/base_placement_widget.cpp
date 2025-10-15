@@ -1,51 +1,43 @@
+
+
+
 #include <base_placement_plugin/widgets/base_placement_widget.h>
 #include <base_placement_plugin/point_tree_model.h>
 #include <base_placement_plugin/place_base.h>
 
-#include <map_creator/hdf5_dataset.h>
+// #include <map_creator/hdf5_dataset.h>
 
 #include <H5Cpp.h>
 #include <hdf5.h>
+
+#include <rclcpp/rclcpp.hpp>
+#include <tf2/LinearMath/Transform.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
 namespace base_placement_plugin
 {
 namespace widgets
 {
-BasePlacementWidget::BasePlacementWidget(std::string ns) : param_ns_(ns)
+BasePlacementWidget::BasePlacementWidget(const std::string& ns, QWidget* parent)
+  : QWidget(parent), param_ns_(ns)
 {
-  /*! Constructor which calls the init() function.
+    /*! Constructor which calls the init() function. */
+    init();
+    show_umodels_ = false;
+}
+BasePlacementWidget::~BasePlacementWidget() {}
 
-  */
-  init();
-  show_umodels_ = false;
-}
-BasePlacementWidget::~BasePlacementWidget()
-{
-}
 void BasePlacementWidget::init()
 {
-  /*! Initializing the RQT UI. Setting up the default values for the UI components:
-        - Default Values for the Base Placement Planner
-        - Validators for the planners
-        - Number of Base pose locations
-        - Number of High Scoring Spheres
-
-          .
-        .
-  */
   add_robot = 0;
   ui_.setupUi(this);
 
   ui_.lnEdit_BaseLocSize->setText("10");
   ui_.lnEdit_SpSize->setText("10");
 
-  // ui_.lnEdit_BaseLocSize->setValidator(new QDoubleValidator(1,20,1,ui_.lnEdit_BaseLocSize));
-  // QValidator *validator = new QIntValidator(1,100, this);
-  // ui_.lnEdit_BaseLocSize->setValidator(validator);
   ui_.lnEdit_BaseLocSize->setValidator(new QIntValidator(1, 100, this));
   ui_.lnEdit_SpSize->setValidator(new QIntValidator(1, 20, this));
 
-  // set progress bar when loading way-points from a yaml file. Could be nice when loading large way-points files
   ui_.progressBar->setRange(0, 100);
   ui_.progressBar->setValue(0);
   ui_.progressBar->hide();
@@ -54,51 +46,44 @@ void BasePlacementWidget::init()
   headers << tr("Point") << tr("Position (m)") << tr("Orientation (deg)");
   PointTreeModel* model = new PointTreeModel(headers, "add_point_button");
   ui_.treeView->setModel(model);
+
   ui_.btn_LoadPath->setToolTip(tr("Load Way-Points from a file"));
   ui_.btn_SavePath->setToolTip(tr("Save Way-Points to a file"));
   ui_.btnAddPoint->setToolTip(tr("Add a new Way-Point"));
   ui_.btnRemovePoint->setToolTip(tr("Remove a selected Way-Point"));
 
-  connect(ui_.btnAddPoint, SIGNAL(clicked()), this, SLOT(pointAddUI()));
-  connect(ui_.btnRemovePoint, SIGNAL(clicked()), this, SLOT(pointDeletedUI()));
-  connect(ui_.treeView->selectionModel(), SIGNAL(currentChanged(const QModelIndex&, const QModelIndex&)), this,
-          SLOT(selectedPoint(const QModelIndex&, const QModelIndex&)));
-  connect(ui_.treeView->selectionModel(), SIGNAL(currentChanged(const QModelIndex&, const QModelIndex&)), this,
-          SLOT(treeViewDataChanged(const QModelIndex&, const QModelIndex&)));
+  connect(ui_.btnAddPoint, &QPushButton::clicked, this, &BasePlacementWidget::pointAddUI);
+  connect(ui_.btnRemovePoint, &QPushButton::clicked, this, &BasePlacementWidget::pointDeletedUI);
+  connect(ui_.treeView->selectionModel(), &QItemSelectionModel::currentChanged, this, &BasePlacementWidget::selectedPoint);
+  connect(ui_.treeView->selectionModel(), &QItemSelectionModel::currentChanged, this, &BasePlacementWidget::treeViewDataChanged);
 
-  connect(ui_.targetPoint, SIGNAL(clicked()), this, SLOT(sendBasePlacementParamsFromUI()));
-  connect(ui_.targetPoint, SIGNAL(clicked()), this, SLOT(parseWayPointBtn_slot()));
+  connect(ui_.targetPoint, &QPushButton::clicked, this, &BasePlacementWidget::sendBasePlacementParamsFromUI);
+  connect(ui_.targetPoint, &QPushButton::clicked, this, &BasePlacementWidget::parseWayPointBtn_slot);
 
-  connect(ui_.btn_LoadPath, SIGNAL(clicked()), this, SLOT(loadPointsFromFile()));
+  connect(ui_.btn_LoadPath, &QPushButton::clicked, this, &BasePlacementWidget::loadPointsFromFile);
 
-  connect(ui_.btn_LoadReachabilityFile, SIGNAL(clicked()), this, SLOT(loadReachabilityFile()));
-  connect(ui_.btn_showUnionMap, SIGNAL(clicked()), this, SLOT(showUnionMapFromUI()));
-  connect(ui_.btn_ClearUnionMap, SIGNAL(clicked()), this, SLOT(clearUnionMapFromUI()));
+  connect(ui_.btn_LoadReachabilityFile, &QPushButton::clicked, this, &BasePlacementWidget::loadReachabilityFile);
+  connect(ui_.btn_showUnionMap, &QPushButton::clicked, this, &BasePlacementWidget::showUnionMapFromUI);
+  connect(ui_.btn_ClearUnionMap, &QPushButton::clicked, this, &BasePlacementWidget::clearUnionMapFromUI);
 
-  connect(ui_.btn_SavePath, SIGNAL(clicked()), this, SLOT(savePointsToFile()));
-  connect(ui_.btn_ClearAllPoints, SIGNAL(clicked()), this, SLOT(clearAllPoints_slot()));
+  connect(ui_.btn_SavePath, &QPushButton::clicked, this, &BasePlacementWidget::savePointsToFile);
+  connect(ui_.btn_ClearAllPoints, &QPushButton::clicked, this, &BasePlacementWidget::clearAllPoints_slot);
 
-
-  // connect(ui_.btn_moveToHome,SIGNAL(clicked()),this,SLOT(moveToHomeFromUI()));
-
-  connect(ui_.combo_planGroup, SIGNAL(currentIndexChanged(int)), this, SLOT(selectedMethod(int)));
-  connect(ui_.combo_opGroup, SIGNAL(currentIndexChanged(int)), this, SLOT(selectedOuputType(int)));
-  connect(ui_.combo_robotModel, SIGNAL(currentIndexChanged(int)), this, SLOT(selectedRobotGroup(int)));
-  connect(ui_.show_umodel_checkBox,SIGNAL(stateChanged(int)), this, SLOT(showUreachModels()));
+  connect(ui_.combo_planGroup, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &BasePlacementWidget::selectedMethod);
+  connect(ui_.combo_opGroup, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &BasePlacementWidget::selectedOuputType);
+  connect(ui_.combo_robotModel, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &BasePlacementWidget::selectedRobotGroup);
+  connect(ui_.show_umodel_checkBox, &QCheckBox::stateChanged, this, &BasePlacementWidget::showUreachModels);
 }
 
 void BasePlacementWidget::showUreachModels()
 {
-  if(show_umodels_)
-    show_umodels_=false;
-  else
-    show_umodels_ = true;
+  show_umodels_ = !show_umodels_;
   Q_EMIT SendShowUmodel(show_umodels_);
 }
 
-void BasePlacementWidget::getSelectedGroup(std::string group_name)
+void BasePlacementWidget::getSelectedGroup(const std::string& group_name)
 {
-  group_name_ = group_name;
+    group_name_ = group_name;
 }
 
 
@@ -108,74 +93,70 @@ void BasePlacementWidget::showUnionMapFromUI()
   Q_EMIT showUnionMap_signal(show_union_map_);
 }
 
-void BasePlacementWidget::getRobotGroups(std::vector<std::string> groups)
+void BasePlacementWidget::getRobotGroups(const std::vector<std::string>& groups)
 {
-  //ROS_INFO("Getting the robot groups");
-  int robot_group = groups.size();
+    int robot_group = groups.size();
 
-  disconnect(ui_.combo_robotModel, SIGNAL(currentIndexChanged(int)), this, SLOT(selectedRobotGroup(int)));
-  ui_.combo_robotModel->clear();
-  connect(ui_.combo_robotModel, SIGNAL(currentIndexChanged(int)), this, SLOT(selectedRobotGroup(int)));
+    disconnect(ui_.combo_robotModel, SIGNAL(currentIndexChanged(int)), this, SLOT(selectedRobotGroup(int)));
+    ui_.combo_robotModel->clear();
+    connect(ui_.combo_robotModel, SIGNAL(currentIndexChanged(int)), this, SLOT(selectedRobotGroup(int)));
 
-  for(int i=0;i<robot_group;i++)
-  {
-    ui_.combo_robotModel->addItem(QString::fromStdString(groups[i]));
-  }
+    for(int i = 0; i < robot_group; i++)
+    {
+        ui_.combo_robotModel->addItem(QString::fromStdString(groups[i]));
+    }
 }
+
 
 void BasePlacementWidget::selectedRobotGroup(int index)
 {
   Q_EMIT SendSelectedRobotGroup(index);
 }
 
-void BasePlacementWidget::getBasePlacePlanMethod(std::vector< std::string > methods)
+void BasePlacementWidget::getBasePlacePlanMethod(const std::vector<std::string>& methods)
 {
-  ROS_INFO("setting the name of the Method in combo box");
-  for (int i = 0; i < methods.size(); i++)
-  {
-    ui_.combo_planGroup->addItem(QString::fromStdString(methods[i]));
-  }
+    RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"), "setting the name of the Method in combo box");
+
+    for (size_t i = 0; i < methods.size(); i++)
+    {
+        ui_.combo_planGroup->addItem(QString::fromStdString(methods[i]));
+    }
 }
+
 
 void BasePlacementWidget::selectedMethod(int index)
 {
   Q_EMIT SendSelectedMethod(index);
-  if(index ==4)
+  if(index == 4)
   {
-    if(group_name_.size()>0)
+    if(group_name_.size() > 0)
     {
       add_robot = new AddRobotBase(0 , group_name_);
-      ROS_INFO("AHA.The user intuition method is selected. Let's Play");
-      //add_robot to widget
-      connect(this, SIGNAL(parseWayPointBtn_signal()), add_robot, SLOT(parseWayPoints()));
-      connect(add_robot, SIGNAL(baseWayPoints_signal(std::vector<geometry_msgs::Pose>)), this, SLOT(getWaypoints(std::vector<geometry_msgs::Pose>)));
-      connect(this, SIGNAL(clearAllPoints_signal()), add_robot, SLOT(clearAllPointsRviz()));
+      RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"), "User intuition method selected.");
+      connect(this, &BasePlacementWidget::parseWayPointBtn_signal, add_robot, &AddRobotBase::parseWayPoints);
+      connect(add_robot, &AddRobotBase::baseWayPoints_signal, this, &BasePlacementWidget::getWaypoints);
+      connect(this, &BasePlacementWidget::clearAllPoints_signal, add_robot, &AddRobotBase::clearAllPointsRviz);
     }
   }
   else
   {
-    if(!add_robot == 0)
+    if(add_robot != 0)
       delete add_robot;
     add_robot = 0;
   }
 }
 
-void BasePlacementWidget::getWaypoints(std::vector<geometry_msgs::Pose> base_poses)
+void BasePlacementWidget::getWaypoints(std::vector<geometry_msgs::msg::Pose> base_poses)
 {
-  std::vector<geometry_msgs::Pose> new_base_poses;
-  new_base_poses = base_poses;
-  Q_EMIT SendBasePoses(new_base_poses);
+  Q_EMIT SendBasePoses(base_poses);
 }
-
 
 void BasePlacementWidget::getOutputType(std::vector< std::string > op_types)
 {
-  ROS_INFO("setting the name of the output type in combo box");
-  int op_type_size = op_types.size();
-
-  for (int i = 0; i < op_type_size; i++)
+  RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"), "setting the name of the output type in combo box");
+  for (const auto &op : op_types)
   {
-    ui_.combo_opGroup->addItem(QString::fromStdString(op_types[i]));
+    ui_.combo_opGroup->addItem(QString::fromStdString(op));
   }
 }
 
@@ -186,16 +167,11 @@ void BasePlacementWidget::selectedOuputType(int index)
 
 void BasePlacementWidget::sendBasePlacementParamsFromUI()
 {
-  /*! This function takes care of sending the User Entered parameters from the RQT to the Base Placement Planner.
-  */
-  int base_loc_size_;
-  int high_score_sp_;
-
-  base_loc_size_ = ui_.lnEdit_BaseLocSize->text().toInt();
-  high_score_sp_ = ui_.lnEdit_SpSize->text().toInt();
-
+  int base_loc_size_ = ui_.lnEdit_BaseLocSize->text().toInt();
+  int high_score_sp_ = ui_.lnEdit_SpSize->text().toInt();
   Q_EMIT basePlacementParamsFromUI_signal(base_loc_size_, high_score_sp_);
 }
+
 void BasePlacementWidget::pointRange()
 {
   /*! Get the current range of points from the TreeView.
@@ -225,7 +201,7 @@ void BasePlacementWidget::selectedPoint(const QModelIndex& current, const QModel
       This is used for updating the information of the lineEdit which informs gives the number of the currently selected
      Way-Point.
   */
-  ROS_INFO_STREAM("Selected Index Changed" << current.row());
+  RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"),"Selected Index Changed" << current.row());
 
   if (current.parent() == QModelIndex())
     ui_.txtPointName->setText(QString::number(current.row()));
@@ -250,7 +226,7 @@ void BasePlacementWidget::pointAddUI()
   rz = DEG2RAD(ui_.LineEditRz->text().toDouble());
 
   // // create transform
-  tf::Transform point_pos(tf::Transform(tf::createQuaternionFromRPY(rx, ry, rz), tf::Vector3(x, y, z)));
+  tf2::Transform point_pos(tf2::Transform(tf::createQuaternionFromRPY(rx, ry, rz), tf::Vector3(x, y, z)));
   Q_EMIT addPoint(point_pos);
 
   pointRange();
@@ -275,7 +251,7 @@ void BasePlacementWidget::pointDeletedUI()
     Q_EMIT pointDelUI_signal(marker_name.c_str());
   }
 }
-void BasePlacementWidget::insertRow(const tf::Transform& point_pos, const int count)
+void BasePlacementWidget::insertRow(const tf2::Transform& point_pos, const int count)
 {
   /*! Whenever we have a new Way-Point insereted either from the RViz or the RQT Widget the the TreeView needs to update
      the information and insert new row that corresponds to the new insered point.
@@ -369,7 +345,7 @@ void BasePlacementWidget::removeRow(int marker_nr)
   QAbstractItemModel* model = ui_.treeView->model();
 
   model->removeRow(marker_nr, QModelIndex());
-  ROS_INFO_STREAM("deleting point nr: " << marker_nr);
+  RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"),"deleting point nr: " << marker_nr);
 
   for (int i = marker_nr; i <= model->rowCount(); ++i)
   {
@@ -382,7 +358,7 @@ void BasePlacementWidget::removeRow(int marker_nr)
   pointRange();
 }
 
-void BasePlacementWidget::pointPosUpdated_slot(const tf::Transform& point_pos, const char* marker_name)
+void BasePlacementWidget::pointPosUpdated_slot(const tf2::Transform& point_pos, const char* marker_name)
 {
   /*! When the user updates the position of the Way-Point or the User Interactive Marker, the information in the
      TreeView also needs to be updated to correspond to the current pose of the InteractiveMarkers.
@@ -449,7 +425,7 @@ void BasePlacementWidget::treeViewDataChanged(const QModelIndex& index, const QM
   qRegisterMetaType< std::string >("std::string");
   QAbstractItemModel* model = ui_.treeView->model();
   QVariant index_data;
-  ROS_INFO_STREAM("Data changed in index:" << index.row() << "parent row" << index2.parent().row());
+  RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"),"Data changed in index:" << index.row() << "parent row" << index2.parent().row());
 
   if ((index.parent() == QModelIndex()) && (index.row() != 0))
   {
@@ -479,7 +455,7 @@ void BasePlacementWidget::treeViewDataChanged(const QModelIndex& index, const QM
     ry = DEG2RAD(orient_y.toDouble());
     rz = DEG2RAD(orient_z.toDouble());
 
-    tf::Transform point_pos = tf::Transform(tf::createQuaternionFromRPY(rx, ry, rz), p);
+    tf2::Transform point_pos = tf2::Transform(tf::createQuaternionFromRPY(rx, ry, rz), p);
 
     Q_EMIT pointPosUpdated_signal(point_pos, temp_str.c_str());
   }
@@ -524,7 +500,7 @@ void BasePlacementWidget::loadPointsFromFile()
     // clear all the scene before loading all the new points from the file!!
     clearAllPoints_slot();
 
-    ROS_INFO_STREAM("Opening the file: " << fileName.toStdString());
+    RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"),"Opening the file: " << fileName.toStdString());
     std::string fin(fileName.toStdString());
 
     YAML::Node doc;
@@ -536,8 +512,8 @@ void BasePlacementWidget::loadPointsFromFile()
     for (size_t i = 0; i < end_of_doc; i++)
     {
       std::string name;
-      geometry_msgs::Pose pose;
-      tf::Transform pose_tf;
+      geometry_msgs::msg::Pose pose;
+      tf2::Transform pose_tf;
 
       double x, y, z, rx, ry, rz;
       name = doc[i]["name"].as< std::string >();
@@ -552,7 +528,7 @@ void BasePlacementWidget::loadPointsFromFile()
       ry = DEG2RAD(ry);
       rz = DEG2RAD(rz);
 
-      pose_tf = tf::Transform(tf::createQuaternionFromRPY(rx, ry, rz), tf::Vector3(x, y, z));
+      pose_tf = tf2::Transform(tf::createQuaternionFromRPY(rx, ry, rz), tf::Vector3(x, y, z));
 
       percent_complete = (i + 1) * 100 / end_of_doc;
       ui_.progressBar->setValue(percent_complete);
@@ -575,14 +551,14 @@ void BasePlacementWidget::clearAllPoints_slot()
   QAbstractItemModel* model = ui_.treeView->model();
   model->removeRows(0, model->rowCount());
   ui_.txtPointName->setText("0");
-  tf::Transform t;
+  tf2::Transform t;
   t.setIdentity();
   insertRow(t, 0);
   pointRange();
 
   Q_EMIT clearAllPoints_signal();
 }
-void BasePlacementWidget::setAddPointUIStartPos(const tf::Transform end_effector)
+void BasePlacementWidget::setAddPointUIStartPos(const tf2::Transform end_effector)
 {
   /*! Setting the default values for the Add New Way-Point from the RQT.
       The information is taken to correspond to the pose of the loaded Robot end-effector.
@@ -665,7 +641,7 @@ void BasePlacementWidget::loadReachabilityFile()
     // clear all the scene before loading all the new points from the file!!
     // clearAllPoints_slot();
 
-    ROS_INFO_STREAM("Opening the file: " << fileName.toStdString());
+    RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"),"Opening the file: " << fileName.toStdString());
 
     std::string fileh5 = fileName.toStdString();
     const char* FILE = fileh5.c_str();
@@ -674,9 +650,9 @@ void BasePlacementWidget::loadReachabilityFile()
     MapVecDouble sp;
     float res;
 
-    hdf5_dataset::Hdf5Dataset h5file(FILE);
-    h5file.open();
-    h5file.loadMapsFromDataset(pose_col_filter, sp, res);
+    // hdf5_dataset::Hdf5Dataset h5file(FILE);
+    // h5file.open();
+    // h5file.loadMapsFromDataset(pose_col_filter, sp, res);
 
 
     std::multimap< std::vector< double >, double > sphere_col;
@@ -712,3 +688,4 @@ void BasePlacementWidget::clearUnionMapFromUI()
 }*/
 }
 }
+
