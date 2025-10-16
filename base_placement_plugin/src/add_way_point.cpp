@@ -5,6 +5,9 @@
 #include <algorithm>
 #include <sstream>
 #include <fstream>
+#include <functional>  // Pour std::bind
+
+using namespace std::placeholders;  // Pour _1, _2, etc.
 
 #include <QHBoxLayout>
 #include <QFileDialog>
@@ -25,7 +28,7 @@
 
 #include <tf2/LinearMath/Transform.h>
 #include <tf2/LinearMath/Matrix3x3.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 #include <yaml-cpp/yaml.h>
 
@@ -37,8 +40,8 @@ namespace base_placement_plugin
 
 AddWayPoint::AddWayPoint(QWidget* parent)
 : rviz_common::Panel(parent),
-  node_(nullptr),
-  count_(0)
+  count_(0),
+  node_(nullptr)
 {
   setObjectName("BasePlacementPlannerPlugin");
 
@@ -87,6 +90,8 @@ void AddWayPoint::onInitialize()
   place_base_ = new PlaceBase(node_);
 
   widget_ = new widgets::BasePlacementWidget("~");
+  // Passer le nœud ROS2 au widget pour qu'il puisse créer AddRobotBase
+  static_cast<widgets::BasePlacementWidget*>(widget_)->setNode(node_);
   this->parentWidget()->resize(widget_->width(), widget_->height());
   QHBoxLayout* main_layout = new QHBoxLayout(this);
   main_layout->addWidget(widget_);
@@ -182,7 +187,7 @@ void AddWayPoint::addPointFromUI(const tf2::Transform point_pos)
   server_->applyChanges();
 }
 
-void AddWayPoint::processFeedback(const visualization_msgs::msg::InteractiveMarkerFeedback::SharedPtr feedback)
+void AddWayPoint::processFeedback(const visualization_msgs::msg::InteractiveMarkerFeedback::ConstSharedPtr& feedback)
 {
   // event_type constants are the same names in ROS2 messages
   switch (feedback->event_type)
@@ -241,7 +246,14 @@ void AddWayPoint::processFeedback(const visualization_msgs::msg::InteractiveMark
 
 void AddWayPoint::pointPoseUpdated(const tf2::Transform& point_pos, const char* marker_name)
 {
-  geometry_msgs::msg::Pose pose = tf2::toMsg(point_pos);
+  geometry_msgs::msg::Pose pose;
+  pose.position.x = point_pos.getOrigin().x();
+  pose.position.y = point_pos.getOrigin().y();
+  pose.position.z = point_pos.getOrigin().z();
+  pose.orientation.x = point_pos.getRotation().x();
+  pose.orientation.y = point_pos.getRotation().y();
+  pose.orientation.z = point_pos.getRotation().z();
+  pose.orientation.w = point_pos.getRotation().w();
   std::stringstream s;
 
   if (strcmp("add_point_button", marker_name) == 0)
@@ -264,7 +276,7 @@ void AddWayPoint::pointPoseUpdated(const tf2::Transform& point_pos, const char* 
   server_->applyChanges();
 }
 
-visualization_msgs::msg::Marker AddWayPoint::makeWayPoint(visualization_msgs::msg::InteractiveMarker& msg)
+visualization_msgs::msg::Marker AddWayPoint::makeWayPoint(visualization_msgs::msg::InteractiveMarker& /* msg */)
 {
   visualization_msgs::msg::Marker marker;
   marker.type = visualization_msgs::msg::Marker::ARROW;
@@ -352,7 +364,14 @@ void AddWayPoint::makeArrow(const tf2::Transform& point_pos, int count_arrow)
   RCLCPP_INFO_STREAM(rclcpp::get_logger("base_placement_plugin"), "Markers frame is: " << target_frame_);
   int_marker.header.frame_id = target_frame_;
   int_marker.scale = INTERACTIVE_MARKER_SCALE;
-  int_marker.pose = tf2::toMsg(point_pos);
+  // Convert tf2::Transform to geometry_msgs::msg::Pose
+  int_marker.pose.position.x = point_pos.getOrigin().x();
+  int_marker.pose.position.y = point_pos.getOrigin().y();
+  int_marker.pose.position.z = point_pos.getOrigin().z();
+  int_marker.pose.orientation.x = point_pos.getRotation().x();
+  int_marker.pose.orientation.y = point_pos.getRotation().y();
+  int_marker.pose.orientation.z = point_pos.getRotation().z();
+  int_marker.pose.orientation.w = point_pos.getRotation().w();
 
   // find if duplicate
   auto it_pos = std::find(waypoints_pos_.begin(), waypoints_pos_.end(), point_pos);
@@ -444,7 +463,7 @@ void AddWayPoint::pointDeleted(std::string marker_name)
   server_->applyChanges();
 }
 
-visualization_msgs::msg::Marker AddWayPoint::makeInterArrow(visualization_msgs::msg::InteractiveMarker& msg)
+visualization_msgs::msg::Marker AddWayPoint::makeInterArrow(visualization_msgs::msg::InteractiveMarker& /* msg */)
 {
   visualization_msgs::msg::Marker marker;
   marker.type = visualization_msgs::msg::Marker::ARROW;
@@ -499,7 +518,14 @@ void AddWayPoint::makeInteractiveMarker()
   visualization_msgs::msg::InteractiveMarker inter_arrow_marker_;
   inter_arrow_marker_.header.frame_id = target_frame_;
   inter_arrow_marker_.scale = ARROW_INTERACTIVE_SCALE;
-  inter_arrow_marker_.pose = tf2::toMsg(box_pos_);
+  // Convert tf2::Transform to geometry_msgs::msg::Pose
+  inter_arrow_marker_.pose.position.x = box_pos_.getOrigin().x();
+  inter_arrow_marker_.pose.position.y = box_pos_.getOrigin().y();
+  inter_arrow_marker_.pose.position.z = box_pos_.getOrigin().z();
+  inter_arrow_marker_.pose.orientation.x = box_pos_.getRotation().x();
+  inter_arrow_marker_.pose.orientation.y = box_pos_.getRotation().y();
+  inter_arrow_marker_.pose.orientation.z = box_pos_.getRotation().z();
+  inter_arrow_marker_.pose.orientation.w = box_pos_.getRotation().w();
   inter_arrow_marker_.description = "Interaction Marker";
   inter_arrow_marker_.name = "add_point_button";
 
@@ -514,7 +540,14 @@ void AddWayPoint::parseWayPoints()
   std::vector< geometry_msgs::msg::Pose > waypoints;
   for (size_t i = 0; i < waypoints_pos_.size(); ++i)
   {
-    target_pose = tf2::toMsg(waypoints_pos_[i]);
+    // Convert tf2::Transform to geometry_msgs::msg::Pose
+    target_pose.position.x = waypoints_pos_[i].getOrigin().x();
+    target_pose.position.y = waypoints_pos_[i].getOrigin().y();
+    target_pose.position.z = waypoints_pos_[i].getOrigin().z();
+    target_pose.orientation.x = waypoints_pos_[i].getRotation().x();
+    target_pose.orientation.y = waypoints_pos_[i].getRotation().y();
+    target_pose.orientation.z = waypoints_pos_[i].getRotation().z();
+    target_pose.orientation.w = waypoints_pos_[i].getRotation().w();
     waypoints.push_back(target_pose);
   }
   Q_EMIT wayPoints_signal(waypoints);

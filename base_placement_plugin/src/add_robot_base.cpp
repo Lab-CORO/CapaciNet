@@ -3,7 +3,7 @@
 #include <tf2_eigen/tf2_eigen.hpp>
 
 AddRobotBase::AddRobotBase(std::shared_ptr<rclcpp::Node> node, QWidget* parent, std::string group_name)
-  : node_(node), group_name_(group_name), widget_(parent), count_(0)
+  : widget_(parent), node_(node), count_(0), group_name_(group_name)
 {
   init();
 }
@@ -115,7 +115,6 @@ void AddRobotBase::processFeedback(
       if (menu_item == 1)
       {
         std::string marker_name = feedback->marker_name;
-        int marker_nr = atoi(marker_name.c_str());
         pointDeleted(marker_name);
         break;
       }
@@ -259,7 +258,7 @@ AddRobotBase::makeArrowControlDetails(visualization_msgs::msg::InteractiveMarker
 }
 
 visualization_msgs::msg::Marker 
-AddRobotBase::makeWayPoint(visualization_msgs::msg::InteractiveMarker& msg)
+AddRobotBase::makeWayPoint(visualization_msgs::msg::InteractiveMarker& /* msg */)
 {
   visualization_msgs::msg::Marker marker;
   marker.type = visualization_msgs::msg::Marker::ARROW;
@@ -479,7 +478,7 @@ AddRobotBase::makeRobotMarker(visualization_msgs::msg::InteractiveMarker& msg, b
 }
 
 visualization_msgs::msg::Marker 
-AddRobotBase::makeInterArrow(visualization_msgs::msg::InteractiveMarker& msg)
+AddRobotBase::makeInterArrow(visualization_msgs::msg::InteractiveMarker& /* msg */)
 {
   visualization_msgs::msg::Marker marker;
   marker.type = visualization_msgs::msg::Marker::ARROW;

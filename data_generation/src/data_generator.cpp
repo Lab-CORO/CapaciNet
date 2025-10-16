@@ -105,6 +105,9 @@ namespace cb_data_generator
 
         bool data_generation(int batch_size, float resolution)
         {
+            // clone this->map_rm
+            auto local_map_rm = this->map_rm;
+
             this->data_file_ = std::make_shared<HighFive::File>(
                 this->data_file_path,
                 HighFive::File::ReadWrite | HighFive::File::Create);
@@ -157,7 +160,7 @@ namespace cb_data_generator
                     
                     if (joint_states_valid[i].data)
                     {
-                        this->map_rm[pt] += 1.0 / 50.0;
+                        local_map_rm[pt] += 1.0 / 50.0;
                     }
                  
                 }
@@ -186,7 +189,7 @@ namespace cb_data_generator
 
             start_time = std::chrono::high_resolution_clock::now();
 
-            utils::saveToHDF5(this->map_rm, voxel_map, resolution, voxel_grid_sizes, voxel_grid_origin, this->data_file_, this->dataset_id);
+            utils::saveToHDF5(local_map_rm, voxel_map, resolution, voxel_grid_sizes, voxel_grid_origin, this->data_file_, this->dataset_id);
             this->dataset_id += 1;
             // End the timer
             end_time = std::chrono::high_resolution_clock::now();

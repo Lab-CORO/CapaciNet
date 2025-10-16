@@ -71,7 +71,7 @@ void CreateMarker::getFullLinkNames(std::vector<std::string>& full_link_names, b
   }
 }
 
-void CreateMarker::generateMockMarkers(const std::vector<double>& joint_positions,
+void CreateMarker::generateMockMarkers(const std::vector<double>& /* joint_positions */,
                                        visualization_msgs::msg::MarkerArray& markers) {
   // Mock: Génère des marqueurs simples pour chaque lien
   // TODO: Remplacer par chargement des mesh depuis URDF
@@ -253,7 +253,7 @@ visualization_msgs::msg::MarkerArray CreateMarker::getDefaultMarkers() {
 }
 
 // TODO: À implémenter par l'utilisateur
-bool CreateMarker::get_fk(const std::vector<double>& joint_positions, 
+bool CreateMarker::get_fk(const std::vector<double>& /* joint_positions */,
                           std::vector<geometry_msgs::msg::Pose>& link_poses) {
   // Placeholder - implémenter avec votre bibliothèque IK/FK
   RCLCPP_WARN(node_->get_logger(), "get_fk() not implemented - using identity transforms");
@@ -271,7 +271,7 @@ bool CreateMarker::get_fk(const std::vector<double>& joint_positions,
   return true;
 }
 
-bool CreateMarker::get_ik(const geometry_msgs::msg::Pose& target_pose, 
+bool CreateMarker::get_ik(const geometry_msgs::msg::Pose& /* target_pose */,
                           std::vector<double>& joint_solution) {
   // Placeholder - implémenter avec votre bibliothèque IK/FK
   RCLCPP_WARN(node_->get_logger(), "get_ik() not implemented - returning zero configuration");

@@ -77,6 +77,18 @@ qt5_wrap_ui(UIC_FILES
   src/widgets/base_placement_widget.ui
 )
 
+## Header files with Q_OBJECT that need MOC
+set(HEADER_FILES_MOC
+  include/base_placement_plugin/point_tree_model.h
+  include/base_placement_plugin/widgets/base_placement_widget.h
+  include/base_placement_plugin/place_base.h
+  include/base_placement_plugin/add_way_point.h
+  include/base_placement_plugin/add_robot_base.h
+)
+
+## Generate MOC files
+qt5_wrap_cpp(MOC_FILES ${HEADER_FILES_MOC})
+
 ## Source files
 set(SOURCE_FILES
   src/place_base.cpp
@@ -87,6 +99,7 @@ set(SOURCE_FILES
   src/point_tree_model.cpp
   src/widgets/base_placement_widget.cpp
   ${UIC_FILES}
+  ${MOC_FILES}
 )
 
 ## Build the plugin library

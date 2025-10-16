@@ -60,6 +60,10 @@ class BasePlacementWidget : public QWidget
 
 public:
   explicit BasePlacementWidget(const std::string& ns = "", QWidget* parent = nullptr);
+
+  // Setter pour le nœud ROS2 (appelé après construction)
+  void setNode(std::shared_ptr<rclcpp::Node> node) { node_ = node; }
+
   virtual ~BasePlacementWidget();
 
   std::string get_name() const
@@ -74,11 +78,12 @@ protected:
   Ui::BasePlacementWidget ui_;
   QStandardItemModel* pointDataModel = nullptr;
 
-  QObject* add_robot = nullptr;
+  AddRobotBase* add_robot = nullptr;
 
   bool show_union_map_ = false;
   bool show_umodels_ = false;
   std::string group_name_;
+  std::shared_ptr<rclcpp::Node> node_;
 
 private:
   QStringList pointList;

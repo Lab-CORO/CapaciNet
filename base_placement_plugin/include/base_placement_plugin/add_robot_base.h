@@ -53,8 +53,8 @@ class BoolProperty;
 
 class AddRobotBase : public QObject
 {
-  Q_OBJECT;
-  
+  Q_OBJECT
+
 public:
   AddRobotBase(std::shared_ptr<rclcpp::Node> node, QWidget* parent, std::string group_name);
   virtual ~AddRobotBase();

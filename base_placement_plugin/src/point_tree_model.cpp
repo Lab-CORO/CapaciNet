@@ -1,4 +1,5 @@
-#include <QtGui>
+#include <QStringList>
+#include <QVector>
 
 #include <base_placement_plugin/point_tree_item.h>
 #include <base_placement_plugin/point_tree_model.h>
@@ -42,7 +43,7 @@ QVariant PointTreeModel::data(const QModelIndex &index, int role) const
 Qt::ItemFlags PointTreeModel::flags(const QModelIndex &index) const
 {
   if (!index.isValid())
-    return 0;
+    return Qt::NoItemFlags;
 
   return Qt::ItemIsEditable | Qt::ItemIsEnabled | Qt::ItemIsSelectable;
 }
@@ -201,7 +202,7 @@ void PointTreeModel::setupModelData(const QStringList &lines, PointTreeItem *par
     if (!lineData.isEmpty())
     {
       // Read the column data from the rest of the line.
-      QStringList columnStrings = lineData.split("\t", QString::SkipEmptyParts);
+      QStringList columnStrings = lineData.split("\t", Qt::SkipEmptyParts);
       QVector< QVariant > columnData;
       for (int column = 0; column < columnStrings.count(); ++column)
         columnData << columnStrings[column];

@@ -21,7 +21,7 @@
 #include <interactive_markers/interactive_marker_server.hpp>
 
 PlaceBase::PlaceBase(std::shared_ptr<rclcpp::Node> node, QObject* parent)
-  : node_(node), QObject(parent)
+  : QObject(parent), node_(node)
 {
   init();
 }
@@ -878,7 +878,7 @@ void PlaceBase::setReachabilityData(
   RCLCPP_INFO(node_->get_logger(), "Resolution: %f", res);
 }
 
-void PlaceBase::ShowUnionMap(bool show_map)
+void PlaceBase::ShowUnionMap(bool /* show_map */)
 {
   RCLCPP_INFO(node_->get_logger(), "Showing Map:");
   
@@ -911,7 +911,7 @@ void PlaceBase::ShowUnionMap(bool show_map)
   }
 }
 
-void PlaceBase::clearUnionMap(bool clear_map)
+void PlaceBase::clearUnionMap(bool /* clear_map */)
 {
   RCLCPP_INFO(node_->get_logger(), "Clearing Map:");
   // TODO: Implement clearing functionality

@@ -12,7 +12,7 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <tf2/LinearMath/Transform.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 namespace base_placement_plugin
 {
@@ -129,13 +129,17 @@ void BasePlacementWidget::selectedMethod(int index)
   Q_EMIT SendSelectedMethod(index);
   if(index == 4)
   {
-    if(group_name_.size() > 0)
+    if(group_name_.size() > 0 && node_)
     {
-      add_robot = new AddRobotBase(0 , group_name_);
+      add_robot = new AddRobotBase(node_, nullptr, group_name_);
       RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"), "User intuition method selected.");
       connect(this, &BasePlacementWidget::parseWayPointBtn_signal, add_robot, &AddRobotBase::parseWayPoints);
       connect(add_robot, &AddRobotBase::baseWayPoints_signal, this, &BasePlacementWidget::getWaypoints);
       connect(this, &BasePlacementWidget::clearAllPoints_signal, add_robot, &AddRobotBase::clearAllPointsRviz);
+    }
+    else if(!node_)
+    {
+      RCLCPP_ERROR(rclcpp::get_logger("BasePlacementWidget"), "ROS2 node not set! Cannot create AddRobotBase.");
     }
   }
   else
@@ -146,12 +150,12 @@ void BasePlacementWidget::selectedMethod(int index)
   }
 }
 
-void BasePlacementWidget::getWaypoints(std::vector<geometry_msgs::msg::Pose> base_poses)
+void BasePlacementWidget::getWaypoints(const std::vector<geometry_msgs::msg::Pose>& base_poses)
 {
   Q_EMIT SendBasePoses(base_poses);
 }
 
-void BasePlacementWidget::getOutputType(std::vector< std::string > op_types)
+void BasePlacementWidget::getOutputType(const std::vector<std::string>& op_types)
 {
   RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"), "setting the name of the output type in combo box");
   for (const auto &op : op_types)
@@ -195,13 +199,13 @@ void BasePlacementWidget::initTreeView()
   // update the validator for the lineEdit Point
   pointRange();
 }
-void BasePlacementWidget::selectedPoint(const QModelIndex& current, const QModelIndex& previous)
+void BasePlacementWidget::selectedPoint(const QModelIndex& current, const QModelIndex& /* previous */)
 {
   /*! Get the selected point from the TreeView.
       This is used for updating the information of the lineEdit which informs gives the number of the currently selected
      Way-Point.
   */
-  RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"),"Selected Index Changed" << current.row());
+  RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"), "Selected Index Changed: %d", current.row());
 
   if (current.parent() == QModelIndex())
     ui_.txtPointName->setText(QString::number(current.row()));
@@ -226,7 +230,10 @@ void BasePlacementWidget::pointAddUI()
   rz = DEG2RAD(ui_.LineEditRz->text().toDouble());
 
   // // create transform
-  tf2::Transform point_pos(tf2::Transform(tf::createQuaternionFromRPY(rx, ry, rz), tf::Vector3(x, y, z)));
+  tf2::Quaternion q;
+  q.setRPY(rx, ry, rz);
+  tf2::Vector3 v(x, y, z);
+  tf2::Transform point_pos(q, v);
   Q_EMIT addPoint(point_pos);
 
   pointRange();
@@ -261,13 +268,14 @@ void BasePlacementWidget::insertRow(const tf2::Transform& point_pos, const int c
       One child for the orientation giving us the Euler Angles of each axis.
   */
 
-  ROS_INFO("inserting new row in the TreeView");
+  RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"), "inserting new row in the TreeView");
   QAbstractItemModel* model = ui_.treeView->model();
 
   // convert the quartenion to roll pitch yaw angle
-  tf::Vector3 p = point_pos.getOrigin();
-  tfScalar rx, ry, rz;
-  point_pos.getBasis().getRPY(rx, ry, rz, 1);
+  tf2::Vector3 p = point_pos.getOrigin();
+  tf2Scalar rx, ry, rz;
+  tf2::Matrix3x3 m(point_pos.getRotation());
+  m.getRPY(rx, ry, rz);
 
   if (count == 0)
   {
@@ -345,7 +353,7 @@ void BasePlacementWidget::removeRow(int marker_nr)
   QAbstractItemModel* model = ui_.treeView->model();
 
   model->removeRow(marker_nr, QModelIndex());
-  RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"),"deleting point nr: " << marker_nr);
+  RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"), "deleting point nr: %d", marker_nr);
 
   for (int i = marker_nr; i <= model->rowCount(); ++i)
   {
@@ -366,9 +374,10 @@ void BasePlacementWidget::pointPosUpdated_slot(const tf2::Transform& point_pos, 
   */
   QAbstractItemModel* model = ui_.treeView->model();
 
-  tf::Vector3 p = point_pos.getOrigin();
-  tfScalar rx, ry, rz;
-  point_pos.getBasis().getRPY(rx, ry, rz, 1);
+  tf2::Vector3 p = point_pos.getOrigin();
+  tf2Scalar rx, ry, rz;
+  tf2::Matrix3x3 m(point_pos.getRotation());
+  m.getRPY(rx, ry, rz);
 
   rx = RAD2DEG(rx);
   ry = RAD2DEG(ry);
@@ -425,7 +434,7 @@ void BasePlacementWidget::treeViewDataChanged(const QModelIndex& index, const QM
   qRegisterMetaType< std::string >("std::string");
   QAbstractItemModel* model = ui_.treeView->model();
   QVariant index_data;
-  RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"),"Data changed in index:" << index.row() << "parent row" << index2.parent().row());
+  RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"), "Data changed in index: %d parent row: %d", index.row(), index2.parent().row());
 
   if ((index.parent() == QModelIndex()) && (index.row() != 0))
   {
@@ -448,14 +457,16 @@ void BasePlacementWidget::treeViewDataChanged(const QModelIndex& index, const QM
     QVariant orient_y = model->data(model->index(1, 2, chldind_orient), Qt::EditRole);
     QVariant orient_z = model->data(model->index(2, 2, chldind_orient), Qt::EditRole);
 
-    tf::Vector3 p(pos_x.toDouble(), pos_y.toDouble(), pos_z.toDouble());
+    tf2::Vector3 p(pos_x.toDouble(), pos_y.toDouble(), pos_z.toDouble());
 
-    tfScalar rx, ry, rz;
+    tf2Scalar rx, ry, rz;
     rx = DEG2RAD(orient_x.toDouble());
     ry = DEG2RAD(orient_y.toDouble());
     rz = DEG2RAD(orient_z.toDouble());
 
-    tf2::Transform point_pos = tf2::Transform(tf::createQuaternionFromRPY(rx, ry, rz), p);
+    tf2::Quaternion q;
+    q.setRPY(rx, ry, rz);
+    tf2::Transform point_pos(q, p);
 
     Q_EMIT pointPosUpdated_signal(point_pos, temp_str.c_str());
   }
@@ -500,14 +511,14 @@ void BasePlacementWidget::loadPointsFromFile()
     // clear all the scene before loading all the new points from the file!!
     clearAllPoints_slot();
 
-    RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"),"Opening the file: " << fileName.toStdString());
+    RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"), "Opening the file: %s", fileName.toStdString().c_str());
     std::string fin(fileName.toStdString());
 
     YAML::Node doc;
     doc = YAML::LoadFile(fin);
     // define double for percent of completion
     double percent_complete;
-    int end_of_doc = doc.size();
+    size_t end_of_doc = doc.size();
 
     for (size_t i = 0; i < end_of_doc; i++)
     {
@@ -528,7 +539,10 @@ void BasePlacementWidget::loadPointsFromFile()
       ry = DEG2RAD(ry);
       rz = DEG2RAD(rz);
 
-      pose_tf = tf2::Transform(tf::createQuaternionFromRPY(rx, ry, rz), tf::Vector3(x, y, z));
+      tf2::Quaternion q;
+      q.setRPY(rx, ry, rz);
+      tf2::Vector3 v(x, y, z);
+      pose_tf = tf2::Transform(q, v);
 
       percent_complete = (i + 1) * 100 / end_of_doc;
       ui_.progressBar->setValue(percent_complete);
@@ -558,14 +572,15 @@ void BasePlacementWidget::clearAllPoints_slot()
 
   Q_EMIT clearAllPoints_signal();
 }
-void BasePlacementWidget::setAddPointUIStartPos(const tf2::Transform end_effector)
+void BasePlacementWidget::setAddPointUIStartPos(const tf2::Transform& end_effector)
 {
   /*! Setting the default values for the Add New Way-Point from the RQT.
       The information is taken to correspond to the pose of the loaded Robot end-effector.
   */
-  tf::Vector3 p = end_effector.getOrigin();
-  tfScalar rx, ry, rz;
-  end_effector.getBasis().getRPY(rx, ry, rz, 1);
+  tf2::Vector3 p = end_effector.getOrigin();
+  tf2Scalar rx, ry, rz;
+  tf2::Matrix3x3 m(end_effector.getRotation());
+  m.getRPY(rx, ry, rz);
 
   rx = RAD2DEG(rx);
   ry = RAD2DEG(ry);
@@ -641,14 +656,14 @@ void BasePlacementWidget::loadReachabilityFile()
     // clear all the scene before loading all the new points from the file!!
     // clearAllPoints_slot();
 
-    RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"),"Opening the file: " << fileName.toStdString());
+    RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"), "Opening the file: %s", fileName.toStdString().c_str());
 
-    std::string fileh5 = fileName.toStdString();
-    const char* FILE = fileh5.c_str();
+    // std::string fileh5 = fileName.toStdString();
+    // const char* FILE = fileh5.c_str();
 
     MultiMap pose_col_filter;
     MapVecDouble sp;
-    float res;
+    float res = 0.0f;
 
     // hdf5_dataset::Hdf5Dataset h5file(FILE);
     // h5file.open();
