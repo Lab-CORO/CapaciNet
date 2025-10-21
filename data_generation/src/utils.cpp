@@ -192,6 +192,114 @@ bool utils::saveToHDF5(const std::map<utils::QuantizedPoint3D, double> &data,
             dataset_data.createAttribute<double>("voxel_grid_size_x", rm_size);
             dataset_data.createAttribute<double>("voxel_grid_size_y", rm_size);
             dataset_data.createAttribute<double>("voxel_grid_size_z", rm_size);
-            
+
             return true;
+}
+
+bool utils::loadFromHDF5(const std::string& filename,
+                std::map<utils::QuantizedPoint3D, double> &reachability_map,
+                double &resolution,
+                std::array<double, 3> &voxel_grid_origin,
+                std::array<int, 3> &voxel_grid_sizes,
+                int group_id)
+{
+    using namespace HighFive;
+
+    try {
+        // Open the HDF5 file in read-only mode
+        File file(filename, File::ReadOnly);
+
+        // Construct group path
+        std::string group_path = "/group/" + std::to_string(group_id);
+
+        // Check if group exists
+        if (!file.exist(group_path)) {
+            std::cerr << "Group " << group_path << " does not exist in file " << filename << std::endl;
+            return false;
+        }
+
+        // Open the group
+        Group group = file.getGroup(group_path);
+
+        // Check if reachability_map dataset exists
+        if (!group.exist("reachability_map")) {
+            std::cerr << "Dataset 'reachability_map' does not exist in group " << group_path << std::endl;
+            return false;
+        }
+
+        // Open the reachability_map dataset
+        DataSet dataset = group.getDataSet("reachability_map");
+
+        // Read attributes
+        double origine_x, origine_y, origine_z;
+        double voxel_size;
+        double size_x, size_y, size_z;
+
+        dataset.getAttribute("origine_x").read(origine_x);
+        dataset.getAttribute("origine_y").read(origine_y);
+        dataset.getAttribute("origine_z").read(origine_z);
+        dataset.getAttribute("voxel_size").read(voxel_size);
+        dataset.getAttribute("voxel_grid_size_x").read(size_x);
+        dataset.getAttribute("voxel_grid_size_y").read(size_y);
+        dataset.getAttribute("voxel_grid_size_z").read(size_z);
+
+        // Set output parameters
+        resolution = voxel_size;
+        voxel_grid_origin[0] = origine_x;
+        voxel_grid_origin[1] = origine_y;
+        voxel_grid_origin[2] = origine_z;
+        voxel_grid_sizes[0] = static_cast<int>(size_x);
+        voxel_grid_sizes[1] = static_cast<int>(size_y);
+        voxel_grid_sizes[2] = static_cast<int>(size_z);
+
+        // Read the 3D reachability map data
+        std::vector<std::vector<std::vector<double>>> rm_data;
+        dataset.read(rm_data);
+
+        // Convert 3D array to map with QuantizedPoint3D keys
+        reachability_map.clear();
+        int rm_size = voxel_grid_sizes[0];
+
+        for (int idx = 0; idx < rm_size; ++idx) {
+            for (int idy = 0; idy < rm_size; ++idy) {
+                for (int idz = 0; idz < rm_size; ++idz) {
+                    double value = rm_data[idx][idy][idz];
+
+                    // Only store non-zero values to save memory
+                    if (value > 1e-10) {
+                        // Convert back from array indices to quantized coordinates
+                        int quantized_x = idx - (rm_size / 2);
+                        int quantized_y = idy - (rm_size / 2);
+                        int quantized_z = idz - (rm_size / 2);
+
+                        // Create QuantizedPoint3D with the pre-quantized coordinates
+                        // We need to reverse the quantization to get the original position
+                        double world_x = quantized_x * resolution;
+                        double world_y = quantized_y * resolution;
+                        double world_z = quantized_z * resolution;
+
+                        QuantizedPoint3D point(world_x, world_y, world_z, resolution);
+                        reachability_map[point] = value;
+                    }
+                }
+            }
+        }
+
+        std::cout << "Successfully loaded " << reachability_map.size()
+                  << " reachable voxels from " << filename
+                  << " (group " << group_id << ")" << std::endl;
+        std::cout << "Resolution: " << resolution << "m" << std::endl;
+        std::cout << "Origin: [" << origine_x << ", " << origine_y << ", " << origine_z << "]" << std::endl;
+        std::cout << "Grid size: [" << voxel_grid_sizes[0] << ", "
+                  << voxel_grid_sizes[1] << ", " << voxel_grid_sizes[2] << "]" << std::endl;
+
+        return true;
+
+    } catch (const HighFive::Exception& e) {
+        std::cerr << "HDF5 error while loading " << filename << ": " << e.what() << std::endl;
+        return false;
+    } catch (const std::exception& e) {
+        std::cerr << "Error while loading " << filename << ": " << e.what() << std::endl;
+        return false;
+    }
 }

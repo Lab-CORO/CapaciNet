@@ -44,7 +44,6 @@ set(dependencies
 
 
 
-ament_package()
 
 ### create_reachability_map ###
 add_executable(create_reachability_map
@@ -152,25 +151,56 @@ include_directories(
   /home/HighFive/include
 )
 
-
+### Create utils library for use by other packages ###
+add_library(utils SHARED
+  src/utils.cpp
+)
+target_include_directories(utils PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+  ${HDF5_INCLUDE_DIRS}
+  ${HighFive_INCLUDE_DIRS}
+  /home/HighFive/include
+)
+target_link_libraries(utils
+  ${HDF5_LIBRARIES}
+  ${HighFive_LIBRARIES}
+)
+ament_target_dependencies(utils
+  rclcpp
+  geometry_msgs
+)
 
 install(TARGETS
+    utils
     create_reachability_map
     create_inverse_reachability_map
     reachability_map_viz
     generate_data
     obstacle_adder
     scene_manager
-    DESTINATION lib/${PROJECT_NAME}
+    EXPORT export_${PROJECT_NAME}
+    ARCHIVE DESTINATION lib
+    LIBRARY DESTINATION lib
+    RUNTIME DESTINATION lib/${PROJECT_NAME}
+)
 
- )
+install(DIRECTORY include/
+  DESTINATION include
+)
 
 install(DIRECTORY
   launch
   data
   DESTINATION share/${PROJECT_NAME}/
-
 )
 
+# Export information
+ament_export_include_directories(include)
+ament_export_libraries(utils)
+ament_export_targets(export_${PROJECT_NAME})
 
 
+
+
+ament_package()

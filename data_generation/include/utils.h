@@ -49,6 +49,13 @@ using namespace std;
                     double (&voxel_grid_origin)[3],
                     std::shared_ptr<HighFive::File> data_file,
                     int dataset_id);
+
+        static bool loadFromHDF5(const std::string& filename,
+                    std::map<utils::QuantizedPoint3D, double> &reachability_map,
+                    double &resolution,
+                    std::array<double, 3> &voxel_grid_origin,
+                    std::array<int, 3> &voxel_grid_sizes,
+                    int group_id = 0);
     };
 
 

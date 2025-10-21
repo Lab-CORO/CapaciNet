@@ -3,6 +3,7 @@
 
 #include <pcl/point_cloud.h>
 #include <pcl/octree/octree.h>
+#include <pcl/common/common.h>
 
 #include <octomap/octomap.h>
 #include <octomap/MapCollection.h>
@@ -40,10 +41,13 @@ int main(int argc, char **argv)
 {
   rclcpp::init(argc, argv);
   auto node = std::make_shared<rclcpp::Node>("inverse_workspace");
-  
+
+  // Déclarer le paramètre ROS
+  node->declare_parameter<std::string>("RM_path", "/home/ros2_ws/src/CapaciNet/data_generation/data/master_ik_data0.1.npz");
+
   time_t startit, finish;
   time(&startit);
-  
+
   std::string file;
   std::string pkg_share_dir;
 
@@ -56,13 +60,40 @@ int main(int argc, char **argv)
     std::vector<geometry_msgs::msg::Pose> pose_col_filter;
     MapPointDoublePtr sphere_col;
 
-    utils::load_poses_from_file("/home/ros2_ws/src/CapaciNet/data_generation/data/master_ik_data0.5.npz", pose_col_filter);
+    // Récupérer le paramètre ROS
+    std::string rm_path = node->get_parameter("RM_path").as_string();
+
+    // Charger les poses
+    utils::load_poses_from_file(rm_path, pose_col_filter);
+
+    // Construire le chemin du fichier HDF5 en remplaçant .npz par .h5
+    std::string rm_h5_path = rm_path;
+    size_t pos = rm_h5_path.find(".npz");
+    if (pos != std::string::npos) {
+      rm_h5_path.replace(pos, 4, ".h5");
+    } else {
+      rm_h5_path += ".h5";
+    }
+
+    // Charger les paramètres depuis le fichier HDF5
+    std::map<utils::QuantizedPoint3D, double> temp_reachability_map;
+    double resolution;
+    std::array<double, 3> loaded_voxel_grid_origin;
+    std::array<int, 3> loaded_voxel_grid_sizes;
+
+    if (!utils::loadFromHDF5(rm_h5_path, temp_reachability_map, resolution,
+                             loaded_voxel_grid_origin, loaded_voxel_grid_sizes, 0)) {
+      RCLCPP_ERROR(node->get_logger(), "Failed to load parameters from HDF5 file: %s", rm_h5_path.c_str());
+      return 1;
+    }
+
+    float size_of_box = std::abs(loaded_voxel_grid_origin[0]) * 2.0; // Calculé depuis l'origine
+    RCLCPP_INFO(node->get_logger(), "Loaded HDF5 parameters - Resolution: %.2f, Size of box: %.2f, Origin: [%.2f, %.2f, %.2f]",
+                resolution, size_of_box, loaded_voxel_grid_origin[0], loaded_voxel_grid_origin[1], loaded_voxel_grid_origin[2]);
 
     // Create Inverse Reachability map
     unsigned char max_depth = 16;
     unsigned char minDepth = 0;
-    float size_of_box = 1.5;
-    float resolution = 0.3;
     sphere_discretization::SphereDiscretization sd;
 
     octomap::point3d origin = octomap::point3d(0, 0, 0);
@@ -126,8 +157,22 @@ int main(int argc, char **argv)
       point.z = inv_trans_vec[2];
       cloud->push_back(point);
     }
+
+    // Calculer les limites réelles du nuage de points
+    pcl::PointXYZ min_pt, max_pt;
+    pcl::getMinMax3D(*cloud, min_pt, max_pt);
+    RCLCPP_INFO(node->get_logger(), "Cloud bounds: min=[%.2f, %.2f, %.2f], max=[%.2f, %.2f, %.2f]",
+                min_pt.x, min_pt.y, min_pt.z, max_pt.x, max_pt.y, max_pt.z);
+
     MultiMapPosePtr base_trns_col;
     pcl::octree::OctreePointCloudSearch<pcl::PointXYZ> octree(resolution);
+
+    // Définir les limites de l'octree en fonction des limites réelles du nuage de points
+    // avec une petite marge pour éviter les erreurs de précision flottante
+    double margin = resolution * 0.5;
+    octree.defineBoundingBox(min_pt.x - margin, min_pt.y - margin, min_pt.z - margin,
+                             max_pt.x + margin, max_pt.y + margin, max_pt.z + margin);
+
     octree.setInputCloud(cloud);
     octree.addPointsFromInputCloud();
 
@@ -137,6 +182,14 @@ int main(int argc, char **argv)
       search_point.x = new_data[i].x();
       search_point.y = new_data[i].y();
       search_point.z = new_data[i].z();
+
+      // Vérifier si le point est dans les limites du nuage de points
+      if (search_point.x < min_pt.x - margin || search_point.x > max_pt.x + margin ||
+          search_point.y < min_pt.y - margin || search_point.y > max_pt.y + margin ||
+          search_point.z < min_pt.z - margin || search_point.z > max_pt.z + margin)
+      {
+        continue; // Ignorer les points hors limites
+      }
 
       // Neighbors within voxel search
       std::vector<int> point_idx_vec;
@@ -184,12 +237,15 @@ int main(int argc, char **argv)
       "All the poses have been processed. Now saving data to an inverse Reachability Map.");
 
     std::vector<std::array<double, 4>> voxel_grid = {};
-    std::string data_file_path = "/home/ros2_ws/src/CapaciNet/data_generation/data/IRM.h5";
+    std::string data_file_path = "/home/ros2_ws/src/CapaciNet/data_generation/data/IRM_0.1.h5";
     std::shared_ptr<HighFive::File> data_file_ = std::make_shared<HighFive::File>(
                 data_file_path,
                 HighFive::File::ReadWrite | HighFive::File::Create);
-    int voxel_grid_sizes[3] = {14, 14, 14};
-    double voxel_grid_origin[3] = {-1.5, -1.5, -1.5};
+
+    // Convertir les std::array en tableaux C pour saveToHDF5
+    int voxel_grid_sizes[3] = {loaded_voxel_grid_sizes[0], loaded_voxel_grid_sizes[1], loaded_voxel_grid_sizes[2]};
+    double voxel_grid_origin[3] = {loaded_voxel_grid_origin[0], loaded_voxel_grid_origin[1], loaded_voxel_grid_origin[2]};
+
     // load IRM
     utils::saveToHDF5(IRM,
             voxel_grid,
