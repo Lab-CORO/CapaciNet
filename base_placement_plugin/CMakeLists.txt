@@ -24,6 +24,8 @@ find_package(rviz_common REQUIRED)
 find_package(rviz_default_plugins REQUIRED)
 find_package(rviz_rendering REQUIRED)
 find_package(pluginlib REQUIRED)
+find_package(data_generation REQUIRED)
+find_package(curobo_msgs REQUIRED)
 # find_package(moveit_ros_planning_interface REQUIRED)
 # find_package(moveit_core REQUIRED)
 # find_package(moveit_ros_planning REQUIRED)
@@ -32,6 +34,8 @@ find_package(eigen3_cmake_module REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(HighFive REQUIRED)
+find_package(PCL REQUIRED COMPONENTS common octree)
+find_package(octomap REQUIRED)
 
 
 # Qt5 dependencies
@@ -49,6 +53,9 @@ include_directories(
   ${EIGEN3_INCLUDE_DIRS}
   ${HDF5_INCLUDE_DIRS}
   ${HighFive_INCLUDE_DIRS}
+  ${PCL_INCLUDE_DIRS}
+  ${OCTOMAP_INCLUDE_DIRS}
+  ${CMAKE_SOURCE_DIR}/../data_generation/include
   /home/HighFive/include
 )
 
@@ -97,6 +104,7 @@ set(SOURCE_FILES
   src/create_marker.cpp
   src/point_tree_item.cpp
   src/point_tree_model.cpp
+  src/sphere_discretization.cpp
   src/widgets/base_placement_widget.cpp
   ${UIC_FILES}
   ${MOC_FILES}
@@ -116,6 +124,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 ament_target_dependencies(${PROJECT_NAME}
   ${dependencies}
   ${HighFive_LIBRARIES}
+  curobo_msgs
 
 )
 
@@ -124,8 +133,11 @@ target_link_libraries(${PROJECT_NAME}
   Qt5::Widgets
   Qt5::Concurrent
   ${HDF5_LIBRARIES}
+  ${PCL_LIBRARIES}
+  ${OCTOMAP_LIBRARIES}
   yaml-cpp
   ${HighFive_LIBRARIES}
+  data_generation::utils
 )
 
 # Prevent pluginlib from using boost

@@ -1,0 +1,278 @@
+---
+title: Architecture UML - Base Placement Plugin (RViz2)
+---
+classDiagram
+    %% ============================================================
+    %% FRAMEWORK EXTERNE
+    %% ============================================================
+    class Panel {
+        <<RViz2 Framework>>
+        +onInitialize() void
+        +load(config) void
+        +save(config) void
+    }
+
+    class QObject {
+        <<Qt Framework>>
+    }
+
+    class QWidget {
+        <<Qt Framework>>
+    }
+
+    class QAbstractItemModel {
+        <<Qt Framework>>
+    }
+
+    %% ============================================================
+    %% CORE PLUGIN - Point d'entrée RViz
+    %% ============================================================
+    class AddWayPoint {
+        <<RViz Panel Plugin>>
+        -shared_ptr~Node~ node_
+        -InteractiveMarkerServer* int_marker_server_
+        -Pose marker_pose_
+        -string frame_id_
+        -vector~string~ arrow_marker_names_
+        -vector~Pose~ arrow_poses_
+
+        +onInitialize() void
+        +load(config) void
+        +save(config) void
+        +processFeedback(feedback) void
+        +makeArrow(pose) Marker
+        +makeInteractiveMarker(frame) void
+
+        <<Q_SLOTS>>
+        +insertPointfromRviz(point) void
+        +deletePointFromRviz(index) void
+        +parseWayPoints() vector~Pose~
+
+        <<Q_SIGNALS>>
+        +wayPoints_signal(poses) void
+        +initRviz() void
+        +pointInsertRviz(point) void
+        +pointDeleteRviz(index) void
+    }
+
+    %% ============================================================
+    %% CORE ALGORITHM ENGINE
+    %% ============================================================
+    class PlaceBase {
+        <<Algorithm Engine>>
+        -shared_ptr~Node~ node_
+        -int selected_method_
+        -int selected_op_type_
+        -string selected_group_
+        -int BASE_LOC_SIZE_
+        -int HIGH_SCORE_SP_
+        -vector~string~ method_names_
+        -vector~string~ output_type_
+        -multimap PoseColFilter
+        -multimap SphereCol
+        -vector~Pose~ final_base_poses
+        -vector~Pose~ GRASP_POSES_
+        -double score_
+        -shared_ptr~CreateMarker~ mark_
+        -Client~Ik~ client_ik
+
+        +PlaceBase(node, parent)
+        +init() void
+
+        <<Q_SLOTS>>
+        +setReachabilityData(...) void
+        +ShowUnionMap(show_map) void
+        +findbase(grasp_poses) bool
+        +BasePlacementHandler(waypoints) void
+        +setBasePlaceParams(size, score) void
+        +getSelectedMethod(index) void
+
+        <<Q_SIGNALS>>
+        +basePlacementProcessStarted() void
+        +basePlacementProcessFinished() void
+        +basePlacementProcessCompleted(score) void
+        +sendBasePlaceMethods_signal(methods) void
+
+        <<Protected Algorithms>>
+        #findBaseByPCA() void
+        #findBaseByGraspReachabilityScore() void
+        #findBaseByIKSolutionScore() void
+        #findBaseByVerticalRobotModel() void
+        #findBaseByUserIntuition() void
+        #transformToRobotbase(...) void
+        #calculateScoreForRobotBase(...) double
+        #isIkSuccesswithTransformedBase(...) bool
+    }
+
+    class WsSphere {
+        <<struct>>
+        +Header header
+        +Point32 point
+        +float ri
+        +vector~Pose~ poses
+    }
+
+    class WorkSpace {
+        <<struct>>
+        +Header header
+        +float resolution
+        +vector~WsSphere~ ws_spheres
+    }
+
+    %% ============================================================
+    %% VISUALIZATION COMPONENTS
+    %% ============================================================
+    class CreateMarker {
+        <<Visualization>>
+        -shared_ptr~Node~ node_
+        -Publisher~MarkerArray~ marker_pub_
+        -vector~string~ joint_names_
+        -vector~string~ link_names_
+
+        +CreateMarker(node)
+        +makeArmMarker(base_pose, joint_states) MarkerArray
+        +makeRobotMarker(base_pose, joint_states) MarkerArray
+        +checkEndEffector(link_name) bool
+        +generateMockMarkers(pose) MarkerArray
+        +publishMarkers(markers) void
+    }
+
+    class AddRobotBase {
+        <<Interactive Markers>>
+        -shared_ptr~Node~ node_
+        -InteractiveMarkerServer* int_marker_server_
+        -vector~Pose~ base_poses_
+
+        +AddRobotBase(node, parent)
+        +makeInteractiveMarkers(poses) void
+        +processFeedback(feedback) void
+
+        <<Q_SIGNALS>>
+        +basePoseUpdated(poses) void
+    }
+
+    %% ============================================================
+    %% UI COMPONENTS
+    %% ============================================================
+    class BasePlacementWidget {
+        <<Main UI>>
+        -Ui::BasePlacementWidget ui_
+        -PointTreeModel* tree_model_
+        -PlaceBase* place_base_
+        -AddRobotBase* add_robot_base_
+        -vector~Pose~ waypoints_
+
+        +BasePlacementWidget(node, parent)
+        +loadReachabilityMap(filename) void
+        +saveWaypoints(filename) void
+        +loadWaypoints(filename) void
+
+        <<Q_SIGNALS>>
+        +reachabilityData_signal(...) void
+        +showUnionMap_signal(show) void
+        +parseWayPointBtn_signal() void
+
+        <<Q_SLOTS>>
+        +onFindBaseClicked() void
+        +onMethodSelected(index) void
+        +updateProgressBar(value) void
+        +showResults(score) void
+    }
+
+    %% ============================================================
+    %% DATA MODEL
+    %% ============================================================
+    class PointTreeModel {
+        <<Qt Model>>
+        -PointTreeItem* root_item_
+
+        +PointTreeModel(parent)
+        +data(index, role) QVariant
+        +setData(index, value, role) bool
+        +index(row, column, parent) QModelIndex
+        +rowCount(parent) int
+        +columnCount(parent) int
+        +insertRows(position, rows, parent) bool
+        +removeRows(position, rows, parent) bool
+    }
+
+    class PointTreeItem {
+        <<Tree Node>>
+        -vector~QVariant~ item_data_
+        -PointTreeItem* parent_item_
+        -vector~PointTreeItem*~ child_items_
+
+        +PointTreeItem(data, parent)
+        +appendChild(child) void
+        +child(row) PointTreeItem*
+        +childCount() int
+        +data(column) QVariant
+        +setData(column, value) bool
+    }
+
+    %% ============================================================
+    %% GEOMETRIC ALGORITHMS
+    %% ============================================================
+    class SphereDiscretization {
+        <<namespace/static>>
+        +generateSphereTree(points, resolution)$ OcTree*
+        +generateSphereTree2(points, resolution)$ OcTree*
+        +make_sphere_rand(radius, num)$ vector~Point~
+        +make_sphere_Archimedes(radius, num)$ vector~Point~
+        +make_sphere_Fibonacci(radius, num)$ vector~Point~
+        +make_long_lat_grid(radius, long, lat)$ vector~Point~
+        +findOptimalPosebyPCA(poses)$ Pose
+        +findOptimalPosebyAverage(poses)$ Pose
+        +associatePose(pose, octree)$ vector~Pose~
+    }
+
+    %% ============================================================
+    %% EXTERNAL SERVICES
+    %% ============================================================
+    class IKService {
+        <<ROS2 Service>>
+        <<curobo_msgs::srv::Ik>>
+        +request IkRequest
+        +response IkResponse
+    }
+
+    %% ============================================================
+    %% RELATIONS - INHERITANCE
+    %% ============================================================
+    Panel <|-- AddWayPoint : inherits
+    QObject <|-- PlaceBase : inherits
+    QObject <|-- AddRobotBase : inherits
+    QWidget <|-- BasePlacementWidget : inherits
+    QAbstractItemModel <|-- PointTreeModel : inherits
+
+    %% ============================================================
+    %% RELATIONS - COMPOSITION
+    %% ============================================================
+    PlaceBase *-- "1" CreateMarker : mark_
+    PlaceBase *-- "n" WsSphere : contains
+    PlaceBase *-- "1" WorkSpace : workspace
+    BasePlacementWidget *-- "1" PlaceBase : owns
+    BasePlacementWidget *-- "1" AddRobotBase : owns
+    BasePlacementWidget *-- "1" PointTreeModel : model
+    PointTreeModel o-- "*" PointTreeItem : tree
+
+    %% ============================================================
+    %% RELATIONS - USAGE / DEPENDENCIES
+    %% ============================================================
+    AddWayPoint ..> PlaceBase : signals/slots
+    PlaceBase ..> CreateMarker : uses
+    PlaceBase ..> SphereDiscretization : uses
+    PlaceBase ..> IKService : ROS2 client
+    BasePlacementWidget ..> PlaceBase : controls
+    BasePlacementWidget ..> AddRobotBase : controls
+
+    %% ============================================================
+    %% NOTES EXPLICATIVES
+    %% ============================================================
+    note for AddWayPoint "Point d'entrée du plugin RViz2\n- Marqueurs interactifs pour waypoints\n- Interface utilisateur 3D\n- Communication Qt signals/slots"
+
+    note for PlaceBase "Moteur d'optimisation\n\n5 algorithmes de placement:\n1. PCA\n2. Grasp Reachability Score\n3. IK Solution Score\n4. Vertical Robot Model\n5. User Intuition\n\nExécution parallèle (QtConcurrent)"
+
+    note for SphereDiscretization "Algorithmes géométriques\n- Discrétisation sphérique\n- Fibonacci, Archimède\n- OctoMap/PCL\n- Optimisation PCA"
+
+    note for CreateMarker "Visualisation RViz\n- Génère MarkerArray\n- Robot complet ou bras seul\n- TODO: parsing URDF"

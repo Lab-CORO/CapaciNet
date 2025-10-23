@@ -119,7 +119,7 @@ private:
   //! Target Frame for the Transformation.
   std::string target_frame_;
 
-  //! ROS2 node
+  //! ROS2 node (shared with RViz)
   rclcpp::Node::SharedPtr node_;
 
 protected Q_SLOTS:

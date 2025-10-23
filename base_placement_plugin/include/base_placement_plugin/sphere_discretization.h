@@ -13,6 +13,9 @@
 
 #include <vector>
 #include <Eigen/Dense>
+#include <pcl/point_cloud.h>
+#include <pcl/point_types.h>
+#include <pcl/octree/octree_search.h>
 
 // #include "utils.h"
 

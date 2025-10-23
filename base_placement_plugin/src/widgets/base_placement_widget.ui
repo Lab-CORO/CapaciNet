@@ -444,12 +444,25 @@ border-color :rgb(48, 48, 48)</string>
         <rect>
          <x>10</x>
          <y>10</y>
-         <width>371</width>
+         <width>181</width>
          <height>31</height>
         </rect>
        </property>
        <property name="text">
-        <string>Load Inverse Reachability File</string>
+        <string>Load IRM File (.h5)</string>
+       </property>
+      </widget>
+      <widget class="QPushButton" name="btn_LoadMasterRM">
+       <property name="geometry">
+        <rect>
+         <x>200</x>
+         <y>10</y>
+         <width>181</width>
+         <height>31</height>
+        </rect>
+       </property>
+       <property name="text">
+        <string>Load Master RM (.npz)</string>
        </property>
       </widget>
       <widget class="QPushButton" name="btn_showUnionMap">

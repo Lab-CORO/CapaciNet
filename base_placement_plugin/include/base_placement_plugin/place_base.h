@@ -13,6 +13,8 @@
 #include <base_placement_plugin/create_marker.h>
 #include <base_placement_plugin/add_robot_base.h>
 
+#include "curobo_msgs/srv/ik.hpp"
+
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 
@@ -232,6 +234,10 @@ protected:
   // For now, using joint names and link names
   std::vector<std::string> joint_names_;
   std::vector<std::string> link_names_;
+
+  rclcpp::Client<curobo_msgs::srv::Ik>::SharedPtr client_ik;
+  rclcpp::CallbackGroup::SharedPtr client_cb_group_;
+
 };
 
 #endif  // PLACE_BASE_H_

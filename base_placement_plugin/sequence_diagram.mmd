@@ -1,0 +1,169 @@
+---
+title: Diagramme de Séquence - Flux de Placement de Base Robot
+---
+sequenceDiagram
+    actor User
+    participant RViz as RViz2 Environment
+    participant AWP as AddWayPoint<br/>(RViz Panel)
+    participant Widget as BasePlacementWidget<br/>(UI)
+    participant PlaceBase as PlaceBase<br/>(Algorithm Engine)
+    participant Sphere as SphereDiscretization<br/>(Geometric Algo)
+    participant Marker as CreateMarker<br/>(Visualization)
+    participant ARB as AddRobotBase<br/>(Interactive Markers)
+    participant IK as IK Service<br/>(curobo_msgs)
+
+    %% ====== PHASE 1: INITIALISATION ======
+    rect rgb(200, 230, 255)
+        Note over User,IK: PHASE 1: INITIALISATION DU PLUGIN
+        User->>RViz: Charge le plugin<br/>base_placement_plugin
+        RViz->>AWP: onInitialize()
+        AWP->>AWP: Crée InteractiveMarkerServer
+        AWP->>Widget: Construit UI
+        Widget->>PlaceBase: new PlaceBase(node)
+        PlaceBase->>PlaceBase: init()
+        PlaceBase->>Marker: new CreateMarker(node)
+        Widget->>ARB: new AddRobotBase(node)
+
+        PlaceBase-->>Widget: sendBasePlaceMethods_signal()<br/>[PCA, GraspScore, IK, Vertical, User]
+        PlaceBase-->>Widget: sendOuputType_signal()<br/>[Arrow, RobotModel, ArmModel]
+        Widget->>Widget: Remplit comboboxes UI
+    end
+
+    %% ====== PHASE 2: CHARGEMENT DONNÉES ======
+    rect rgb(255, 245, 200)
+        Note over User,IK: PHASE 2: CHARGEMENT REACHABILITY MAP
+        User->>Widget: Clic "Load Reachability Map"
+        Widget->>Widget: loadReachabilityMap(filename.h5)
+        Widget->>Widget: Parse HDF5:<br/>PoseCollection, SphereCollection
+        Widget->>PlaceBase: reachabilityData_signal(poses, spheres, res)
+        PlaceBase->>PlaceBase: setReachabilityData(...)
+        PlaceBase->>PlaceBase: Stocke données:<br/>PoseColFilter, SphereCol
+    end
+
+    %% ====== PHASE 3: DÉFINITION WAYPOINTS ======
+    rect rgb(200, 255, 200)
+        Note over User,IK: PHASE 3: DÉFINITION DES WAYPOINTS (POSES CIBLES)
+        User->>AWP: Clic dans RViz<br/>pour placer waypoints
+        AWP->>AWP: makeInteractiveMarker()
+        AWP->>RViz: Affiche marqueur interactif
+        User->>RViz: Déplace/oriente marqueur
+        RViz->>AWP: processFeedback(feedback)
+        AWP->>AWP: Stocke pose dans arrow_poses_
+
+        User->>Widget: Clic "Parse Waypoints"
+        Widget->>AWP: parseWayPoints()
+        AWP->>AWP: Convertit marqueurs en Pose[]
+        AWP-->>Widget: wayPoints_signal(poses)
+        Widget->>Widget: Affiche waypoints<br/>dans PointTreeModel
+    end
+
+    %% ====== PHASE 4: CONFIGURATION ======
+    rect rgb(255, 230, 255)
+        Note over User,IK: PHASE 4: CONFIGURATION PARAMÈTRES
+        User->>Widget: Sélectionne méthode:<br/>"GraspReachabilityScore"
+        Widget->>PlaceBase: getSelectedMethod(1)
+        PlaceBase->>PlaceBase: selected_method_ = 1
+
+        User->>Widget: Sélectionne visualisation:<br/>"RobotModel"
+        Widget->>PlaceBase: getSelectedOpType(1)
+        PlaceBase->>PlaceBase: selected_op_type_ = 1
+
+        User->>Widget: Ajuste paramètres:<br/>Base Locations = 5<br/>High Score Spheres = 100
+        Widget->>PlaceBase: setBasePlaceParams(5, 100)
+        PlaceBase->>PlaceBase: BASE_LOC_SIZE_ = 5<br/>HIGH_SCORE_SP_ = 100
+    end
+
+    %% ====== PHASE 5: CALCUL PLACEMENT ======
+    rect rgb(255, 200, 200)
+        Note over User,IK: PHASE 5: CALCUL DU PLACEMENT OPTIMAL
+        User->>Widget: Clic "Find Base"
+        Widget->>Widget: onFindBaseClicked()
+        Widget->>PlaceBase: BasePlacementHandler(waypoints)
+
+        PlaceBase-->>Widget: basePlacementProcessStarted()
+        Widget->>Widget: Affiche progress bar
+
+        activate PlaceBase
+        Note over PlaceBase: Thread QtConcurrent
+        PlaceBase->>PlaceBase: findbase(GRASP_POSES_)
+        PlaceBase->>PlaceBase: BasePlaceMethodHandler()
+
+        alt Méthode = GraspReachabilityScore
+            PlaceBase->>PlaceBase: findBaseByGraspReachabilityScore()
+            PlaceBase->>PlaceBase: transformToRobotbase(...)
+            PlaceBase->>Sphere: associatePose(grasp_pose, octree)
+            Sphere-->>PlaceBase: vector<Pose> candidates
+            PlaceBase->>PlaceBase: createSpheres(basePoses, spColor, ...)
+            PlaceBase->>Sphere: generateSphereTree(points, res)
+            Sphere-->>PlaceBase: OcTree*
+            PlaceBase->>PlaceBase: Score chaque position candidate
+            PlaceBase->>PlaceBase: Sélectionne top BASE_LOC_SIZE_
+        else Méthode = IKSolutionScore
+            PlaceBase->>PlaceBase: findBaseByIKSolutionScore()
+            loop Pour chaque base candidate
+                PlaceBase->>IK: call IK service(base_pose, grasp_pose)
+                IK-->>PlaceBase: joint_solution, success
+                PlaceBase->>PlaceBase: Incrémente score si succès
+            end
+            PlaceBase->>PlaceBase: Trie par nombre de solutions IK
+        else Méthode = PCA
+            PlaceBase->>PlaceBase: findBaseByPCA()
+            PlaceBase->>Sphere: findOptimalPosebyPCA(poses)
+            Sphere->>Sphere: Calcul PCA (Eigen)
+            Sphere-->>PlaceBase: Pose optimale
+        end
+
+        PlaceBase->>PlaceBase: final_base_poses = résultats
+        PlaceBase->>PlaceBase: calculateScoreForRobotBase(...)
+        PlaceBase->>PlaceBase: best_pose_ = meilleure pose<br/>score_ = score final
+        deactivate PlaceBase
+
+        PlaceBase-->>Widget: basePlacementProcessCompleted(score)
+        Widget->>Widget: Affiche résultat:<br/>"Score: 0.85"
+    end
+
+    %% ====== PHASE 6: VISUALISATION ======
+    rect rgb(230, 255, 255)
+        Note over User,IK: PHASE 6: VISUALISATION DES RÉSULTATS
+        PlaceBase->>PlaceBase: OuputputVizHandler(final_base_poses)
+
+        alt Visualisation = RobotModel
+            PlaceBase->>PlaceBase: showBaseLocationsbyRobotModel(poses)
+            PlaceBase->>Marker: makeRobotMarker(base_pose, joint_states)
+            Marker->>Marker: generateMockMarkers(pose)
+            Marker-->>PlaceBase: MarkerArray
+            PlaceBase->>RViz: Publie MarkerArray
+            RViz->>User: Affiche modèles de robots<br/>aux positions optimales
+        else Visualisation = Arrow
+            PlaceBase->>PlaceBase: showBaseLocationsbyArrow(poses)
+            PlaceBase->>ARB: makeInteractiveMarkers(poses)
+            ARB->>RViz: Crée marqueurs flèches
+            RViz->>User: Affiche flèches aux positions
+        else Visualisation = ArmModel
+            PlaceBase->>Marker: makeArmMarker(base_pose, joint_states)
+            Marker-->>PlaceBase: MarkerArray (bras uniquement)
+        end
+
+        PlaceBase-->>Widget: basePlacementProcessFinished()
+        Widget->>Widget: Cache progress bar
+    end
+
+    %% ====== PHASE 7: INTERACTION UTILISATEUR ======
+    rect rgb(240, 240, 240)
+        Note over User,IK: PHASE 7: INTERACTION POST-CALCUL
+        User->>Widget: Clic "Show Union Map"
+        Widget->>PlaceBase: ShowUnionMap(true)
+        PlaceBase->>Marker: Publie sphereColor map
+        PlaceBase->>RViz: Visualise inverse reachability
+        RViz->>User: Affiche sphères colorées<br/>(carte de reachability)
+
+        opt Modification manuelle
+            User->>ARB: Déplace marqueur de base
+            ARB->>ARB: processFeedback(feedback)
+            ARB-->>PlaceBase: basePoseUpdated(new_poses)
+            PlaceBase->>PlaceBase: final_base_poses_user = new_poses
+        end
+    end
+
+    %% ====== NOTES ======
+    Note over User,IK: Les 5 méthodes de placement:<br/>1. PCA - Analyse composantes principales<br/>2. GraspReachabilityScore - Score de reachability<br/>3. IKSolutionScore - Nombre de solutions IK<br/>4. VerticalRobotModel - Alignement vertical<br/>5. UserIntuition - Guidage manuel

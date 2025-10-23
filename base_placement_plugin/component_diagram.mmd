@@ -1,0 +1,161 @@
+---
+title: Diagramme de Composants - Base Placement Plugin
+---
+graph TB
+    subgraph RViz2["🖼️ RViz2 Environment"]
+        rviz_core["RViz Core"]
+        interactive_markers["Interactive Markers Server"]
+        3d_view["Vue 3D"]
+    end
+
+    subgraph Plugin["🔌 Base Placement Plugin"]
+        subgraph UI["💻 Interface Utilisateur (Qt)"]
+            panel["AddWayPoint<br/>(RViz Panel)<br/>━━━━━━━━<br/>📍 Placement waypoints<br/>🖱️ Marqueurs interactifs"]
+            widget["BasePlacementWidget<br/>(QWidget)<br/>━━━━━━━━<br/>⚙️ Configuration<br/>📊 Résultats<br/>🗂️ Gestion fichiers"]
+            tree_model["PointTreeModel<br/>━━━━━━━━<br/>🌳 Hiérarchie waypoints<br/>📋 Vue en arbre"]
+        end
+
+        subgraph Core["⚙️ Moteur de Calcul"]
+            place_base["PlaceBase<br/>(QObject)<br/>━━━━━━━━<br/>🧠 Algorithmes placement<br/>📐 Transformations<br/>🔢 Calcul scores"]
+
+            subgraph Algorithms["📊 5 Algorithmes"]
+                pca["1️⃣ PCA<br/>Analyse composantes"]
+                grasp["2️⃣ Grasp Reachability<br/>Score accessibilité"]
+                ik["3️⃣ IK Solutions<br/>Cinématique inverse"]
+                vertical["4️⃣ Vertical Model<br/>Alignement vertical"]
+                user["5️⃣ User Intuition<br/>Guidage manuel"]
+            end
+        end
+
+        subgraph Visualization["🎨 Visualisation"]
+            create_marker["CreateMarker<br/>━━━━━━━━<br/>🤖 Modèles robots<br/>🦾 Modèles bras<br/>➡️ Flèches"]
+            add_robot_base["AddRobotBase<br/>━━━━━━━━<br/>🔵 Marqueurs bases<br/>📍 Positions optimales"]
+        end
+
+        subgraph Geometry["📐 Algorithmes Géométriques"]
+            sphere["SphereDiscretization<br/>━━━━━━━━<br/>🔮 Fibonacci<br/>🌀 Archimède<br/>🎯 Latitude/Longitude"]
+        end
+
+        subgraph DataStructures["💾 Structures de Données"]
+            ws_sphere["WsSphere<br/>━━━━━━━━<br/>📍 Point central<br/>📏 Rayon ri<br/>🔄 Poses associées"]
+            workspace["WorkSpace<br/>━━━━━━━━<br/>🗺️ Collection sphères<br/>📊 Résolution<br/>🌐 Carte complète"]
+        end
+    end
+
+    subgraph ROS2["🤖 ROS2 Ecosystem"]
+        node["rclcpp::Node<br/>━━━━━━━━<br/>📡 Communication<br/>🔄 Publishers/Subscribers"]
+        tf2["TF2<br/>━━━━━━━━<br/>🔄 Transformations<br/>📐 Frames référence"]
+        ik_service["IK Service<br/>(curobo_msgs)<br/>━━━━━━━━<br/>🦾 Cinématique inverse<br/>✅ Validation poses"]
+        marker_topic["Topic: /visualization_marker_array<br/>━━━━━━━━<br/>📊 MarkerArray messages"]
+    end
+
+    subgraph External["📚 Bibliothèques Externes"]
+        qt["Qt5<br/>━━━━━━━━<br/>🖼️ GUI Framework<br/>🔄 Signals/Slots<br/>⚡ QtConcurrent"]
+        eigen["Eigen3<br/>━━━━━━━━<br/>🧮 Algèbre linéaire<br/>📐 Matrices/Vecteurs<br/>📊 PCA"]
+        octomap["OctoMap<br/>━━━━━━━━<br/>🗺️ Carte 3D<br/>🔍 Requêtes spatiales<br/>🎯 Octree"]
+        pcl["PCL<br/>━━━━━━━━<br/>☁️ Point Cloud<br/>🔍 Nearest Neighbor<br/>🌳 KD-Tree"]
+        hdf5["HDF5/HighFive<br/>━━━━━━━━<br/>💾 Stockage données<br/>📊 Reachability maps"]
+    end
+
+    subgraph Data["📂 Fichiers de Données"]
+        reach_map["Reachability Map<br/>(fichier .h5)<br/>━━━━━━━━<br/>🗺️ Poses accessibles<br/>🔮 Sphères workspace<br/>📏 Résolution"]
+        waypoints_file["Waypoints<br/>(fichier YAML/JSON)<br/>━━━━━━━━<br/>📍 Poses cibles<br/>🎯 Points passage"]
+    end
+
+    %% ============================================================
+    %% CONNEXIONS UI
+    %% ============================================================
+    panel -.->|"🔄 Qt Signals/Slots"| place_base
+    widget -.->|"🔄 Qt Signals/Slots"| place_base
+    widget -->|"owns"| place_base
+    widget -->|"owns"| add_robot_base
+    widget -->|"uses"| tree_model
+    panel --> interactive_markers
+
+    %% ============================================================
+    %% CONNEXIONS ALGORITHMES
+    %% ============================================================
+    place_base --> pca
+    place_base --> grasp
+    place_base --> ik
+    place_base --> vertical
+    place_base --> user
+
+    %% ============================================================
+    %% CONNEXIONS GÉOMÉTRIE
+    %% ============================================================
+    place_base -->|"utilise"| sphere
+    pca -->|"calculs PCA"| sphere
+    grasp -->|"génération sphères"| sphere
+
+    %% ============================================================
+    %% CONNEXIONS VISUALISATION
+    %% ============================================================
+    place_base -->|"crée marqueurs"| create_marker
+    place_base -->|"envoie poses"| add_robot_base
+    create_marker --> marker_topic
+    add_robot_base --> interactive_markers
+
+    %% ============================================================
+    %% CONNEXIONS DONNÉES
+    %% ============================================================
+    place_base -->|"contient"| ws_sphere
+    place_base -->|"gère"| workspace
+    ws_sphere -.->|"partie de"| workspace
+
+    %% ============================================================
+    %% CONNEXIONS ROS2
+    %% ============================================================
+    place_base --> node
+    create_marker --> node
+    add_robot_base --> node
+    panel --> node
+    place_base -->|"appelle service"| ik_service
+    node --> tf2
+
+    %% ============================================================
+    %% CONNEXIONS BIBLIOTHÈQUES
+    %% ============================================================
+    widget --> qt
+    place_base --> qt
+    panel --> qt
+    sphere --> eigen
+    pca --> eigen
+    sphere --> octomap
+    grasp --> octomap
+    sphere --> pcl
+    grasp --> pcl
+
+    %% ============================================================
+    %% CONNEXIONS FICHIERS
+    %% ============================================================
+    widget -.->|"📥 charge"| reach_map
+    reach_map -.->|"données"| hdf5
+    widget -.->|"💾 sauvegarde/charge"| waypoints_file
+
+    %% ============================================================
+    %% CONNEXIONS RVIZ
+    %% ============================================================
+    interactive_markers --> 3d_view
+    marker_topic --> rviz_core
+    rviz_core --> 3d_view
+    panel --> rviz_core
+
+    %% ============================================================
+    %% STYLES
+    %% ============================================================
+    classDef uiClass fill:#e1f5ff,stroke:#0288d1,stroke-width:2px
+    classDef coreClass fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef algoClass fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    classDef vizClass fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    classDef rosClass fill:#fff9c4,stroke:#f9a825,stroke-width:2px
+    classDef dataClass fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    classDef libClass fill:#e0e0e0,stroke:#616161,stroke-width:2px
+
+    class panel,widget,tree_model uiClass
+    class place_base coreClass
+    class pca,grasp,ik,vertical,user algoClass
+    class create_marker,add_robot_base,sphere vizClass
+    class node,tf2,ik_service,marker_topic rosClass
+    class ws_sphere,workspace,reach_map,waypoints_file dataClass
+    class qt,eigen,octomap,pcl,hdf5 libClass

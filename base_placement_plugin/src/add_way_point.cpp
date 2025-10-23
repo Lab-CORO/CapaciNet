@@ -16,6 +16,8 @@ using namespace std::placeholders;  // Pour _1, _2, etc.
 #include <rclcpp/rclcpp.hpp>
 
 #include <rviz_common/panel.hpp>
+#include <rviz_common/display_context.hpp>
+#include <rviz_common/ros_integration/ros_node_abstraction.hpp>
 
 #include <interactive_markers/interactive_marker_server.hpp>
 #include <interactive_markers/menu_handler.hpp>
@@ -45,14 +47,8 @@ AddWayPoint::AddWayPoint(QWidget* parent)
 {
   setObjectName("BasePlacementPlannerPlugin");
 
-  // Créer un node rclcpp local pour l'interactive marker server_.
-  // IMPORTANT: rclcpp::init() doit déjà avoir été appelé par l'application (rviz2).
-  node_ = rclcpp::Node::make_shared("base_placement_plugin_rviz_panel");
-
-  // NOTE: La signature du constructeur InteractiveMarkerServer varie selon la distro.
-  // Certains constructeurs attendent (node, name) ; certains (name, options).
-  // Essayez cette forme; si la compilation échoue, adaptez la signature selon votre distro.
-  server_ = std::make_shared<interactive_markers::InteractiveMarkerServer>("marker_server", node_);
+  // Le node sera initialisé dans onInitialize() en utilisant le node RViz
+  // Cela garantit que le node est correctement spinné
 
   // couleurs / échelles
   WAY_POINT_COLOR.r = 1.0;
@@ -87,6 +83,23 @@ AddWayPoint::~AddWayPoint()
 
 void AddWayPoint::onInitialize()
 {
+  // Obtenir le node RViz au lieu de créer un nouveau node
+  // Le node RViz est déjà spinné correctement par RViz
+  auto rviz_ros_node = getDisplayContext()->getRosNodeAbstraction().lock();
+  if (rviz_ros_node)
+  {
+    node_ = rviz_ros_node->get_raw_node();
+    RCLCPP_INFO(node_->get_logger(), "Using RViz node for interactive markers");
+  }
+  else
+  {
+    RCLCPP_ERROR(rclcpp::get_logger("base_placement_plugin"), "Failed to get RViz node!");
+    return;
+  }
+
+  // Recréer le serveur avec le node RViz
+  server_ = std::make_shared<interactive_markers::InteractiveMarkerServer>("marker_server", node_);
+
   place_base_ = new PlaceBase(node_);
 
   widget_ = new widgets::BasePlacementWidget("~");
@@ -158,6 +171,13 @@ void AddWayPoint::onInitialize()
   connect(this, SIGNAL(initRviz()), place_base_, SLOT(initRvizDone()));
 
   Q_EMIT initRviz();
+
+  // Initialiser le frame_id et créer le marqueur interactif initial
+  target_frame_ = "base_link";  // Frame par défaut
+  box_pos_.setIdentity();       // Position initiale à l'origine
+  makeInteractiveMarker();      // Créer le marqueur "add_point_button"
+  server_->applyChanges();      // Publier les changements vers RViz
+
   RCLCPP_INFO(rclcpp::get_logger("base_placement_plugin"), "ready.");
 }
 

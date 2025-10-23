@@ -103,6 +103,7 @@ protected Q_SLOTS:
   void savePointsToFile();
   void loadPointsFromFile();
   void loadReachabilityFile();
+  void loadMasterRMFile();
   void showUnionMapFromUI();
   void clearUnionMapFromUI();
   void startUserIntution();

@@ -1,6 +1,7 @@
 #include <base_placement_plugin/place_base.h>
 
 #include <math.h>
+#include <chrono>
 #include <Eigen/Eigen>
 #include <tf2_eigen/tf2_eigen.hpp>
 
@@ -20,10 +21,18 @@
 #include <visualization_msgs/msg/interactive_marker.hpp>
 #include <interactive_markers/interactive_marker_server.hpp>
 
+using namespace std::chrono_literals;
+
+
 PlaceBase::PlaceBase(std::shared_ptr<rclcpp::Node> node, QObject* parent)
   : QObject(parent), node_(node)
 {
   init();
+
+  client_cb_group_ = node_->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+  this->client_ik = node_->create_client<curobo_msgs::srv::Ik>("/curobo_ik/ik_pose", rmw_qos_profile_services_default,
+                                                                  client_cb_group_);
+
 }
 
 PlaceBase::~PlaceBase()
@@ -576,22 +585,47 @@ void PlaceBase::findBaseByVerticalRobotModel()
 void PlaceBase::findBaseByPCA()
 {
   RCLCPP_INFO(node_->get_logger(), "Finding optimal base pose by PCA.");
+
+  // Validation: check if highScoreSp has enough elements
+  if (highScoreSp.size() < static_cast<size_t>(BASE_LOC_SIZE_))
+  {
+    RCLCPP_ERROR(node_->get_logger(),
+      "Not enough high score spheres! Required: %d, Available: %lu",
+      BASE_LOC_SIZE_, highScoreSp.size());
+    return;
+  }
+
+  // Validation: check if baseTrnsCol is not empty
+  if (baseTrnsCol.empty())
+  {
+    RCLCPP_ERROR(node_->get_logger(), "baseTrnsCol is empty! Cannot proceed with PCA.");
+    return;
+  }
+
   sphere_discretization::SphereDiscretization sd;
   std::vector<geometry_msgs::msg::Pose> pose_scores;
   PlaceBase::WorkSpace ws;
-  
+
   for (int i = 0; i < BASE_LOC_SIZE_; ++i)
   {
+    // Additional safety check
+    if (highScoreSp[i].size() < 3)
+    {
+      RCLCPP_ERROR(node_->get_logger(),
+        "highScoreSp[%d] doesn't have 3 elements! Size: %lu", i, highScoreSp[i].size());
+      continue;
+    }
+
     PlaceBase::WsSphere wss;
     wss.point.x = highScoreSp[i][0];
     wss.point.y = highScoreSp[i][1];
     wss.point.z = highScoreSp[i][2];
-    
+
     std::vector<double> basePose;
     basePose.push_back(highScoreSp[i][0]);
     basePose.push_back(highScoreSp[i][1]);
     basePose.push_back(highScoreSp[i][2]);
-    
+
     std::multimap<std::vector<double>, std::vector<double>>::iterator it;
     for (it = baseTrnsCol.lower_bound(basePose); it != baseTrnsCol.upper_bound(basePose); ++it)
     {
@@ -599,21 +633,39 @@ void PlaceBase::findBaseByPCA()
       sd.convertVectorToPose(it->second, pp);
       wss.poses.push_back(pp);
     }
-    ws.ws_spheres.push_back(wss);
+
+    // Only add sphere if it has poses
+    if (!wss.poses.empty())
+    {
+      ws.ws_spheres.push_back(wss);
+    }
+    else
+    {
+      RCLCPP_WARN(node_->get_logger(),
+        "No poses found for sphere %d at position [%f, %f, %f]",
+        i, wss.point.x, wss.point.y, wss.point.z);
+    }
+  }
+
+  // Check if we have any valid spheres
+  if (ws.ws_spheres.empty())
+  {
+    RCLCPP_ERROR(node_->get_logger(), "No valid spheres with poses found! Cannot proceed.");
+    return;
   }
 
   for (size_t i = 0; i < ws.ws_spheres.size(); ++i)
   {
     geometry_msgs::msg::Pose final_base_pose;
     sd.findOptimalPosebyPCA(ws.ws_spheres[i].poses, final_base_pose);
-    
+
     final_base_pose.position.x = ws.ws_spheres[i].point.x;
     final_base_pose.position.y = ws.ws_spheres[i].point.y;
     final_base_pose.position.z = ws.ws_spheres[i].point.z;
     geometry_msgs::msg::Transform final_transform;
-    final_transform.translation.x =final_base_pose.position.x;
-    final_transform.translation.y =final_base_pose.position.y;
-    final_transform.translation.z =final_base_pose.position.z;
+    final_transform.translation.x = final_base_pose.position.x;
+    final_transform.translation.y = final_base_pose.position.y;
+    final_transform.translation.z = final_base_pose.position.z;
     final_transform.rotation = final_base_pose.orientation;
     Eigen::Affine3d final_base_tf = tf2::transformToEigen(final_transform);
     Eigen::Affine3d rx = Eigen::Affine3d(Eigen::AngleAxisd(-M_PI / 2, Eigen::Vector3d(1, 0, 0)));
@@ -866,16 +918,34 @@ void PlaceBase::showBaseLocationsbyRobotModel(std::vector<geometry_msgs::msg::Po
 
 void PlaceBase::setReachabilityData(
   std::multimap<std::vector<double>, std::vector<double>> PoseCollection,
-  std::multimap<std::vector<double>, double> SphereCollection, 
+  std::multimap<std::vector<double>, double> SphereCollection,
   float resolution)
 {
-  PoseColFilter = PoseCollection;
-  SphereCol = SphereCollection;
-  res = resolution;
-  
-  RCLCPP_INFO(node_->get_logger(), "Size of poses dataset: %lu", PoseColFilter.size());
-  RCLCPP_INFO(node_->get_logger(), "Size of Sphere dataset: %lu", SphereCol.size());
-  RCLCPP_INFO(node_->get_logger(), "Resolution: %f", res);
+  // Merge PoseCollection into PoseColFilter (don't replace if incoming is empty)
+  if (!PoseCollection.empty())
+  {
+    PoseColFilter.insert(PoseCollection.begin(), PoseCollection.end());
+    RCLCPP_INFO(node_->get_logger(), "Added %lu poses to PoseColFilter (total: %lu)",
+                PoseCollection.size(), PoseColFilter.size());
+  }
+
+  // Merge SphereCollection into SphereCol (don't replace if incoming is empty)
+  if (!SphereCollection.empty())
+  {
+    SphereCol.insert(SphereCollection.begin(), SphereCollection.end());
+    RCLCPP_INFO(node_->get_logger(), "Added %lu spheres to SphereCol (total: %lu)",
+                SphereCollection.size(), SphereCol.size());
+  }
+
+  // Update resolution if provided (non-zero)
+  if (resolution > 0.0f)
+  {
+    res = resolution;
+    RCLCPP_INFO(node_->get_logger(), "Updated resolution: %f", res);
+  }
+
+  RCLCPP_INFO(node_->get_logger(), "Current total - Poses: %lu, Spheres: %lu, Resolution: %f",
+              PoseColFilter.size(), SphereCol.size(), res);
 }
 
 void PlaceBase::ShowUnionMap(bool /* show_map */)
@@ -915,4 +985,79 @@ void PlaceBase::clearUnionMap(bool /* clear_map */)
 {
   RCLCPP_INFO(node_->get_logger(), "Clearing Map:");
   // TODO: Implement clearing functionality
+}
+
+bool PlaceBase::isIkSuccesswithTransformedBase(const geometry_msgs::msg::Pose& base_pose,
+                                              const geometry_msgs::msg::Pose& grasp_pose,
+                                              std::vector<double>& joint_soln,
+                                              int& numOfSolns){
+  // Create the transformation inverse taking base_pose as world base
+  // Tb_g = Tw_b-1 * Tw_g
+  tf2::Transform base_pose_trans;
+  base_pose_trans.setOrigin(tf2::Vector3(base_pose.position.x,
+                                          base_pose.position.y,
+                                          base_pose.position.z));
+  base_pose_trans.setRotation(tf2::Quaternion(base_pose.orientation.x,
+                                                base_pose.orientation.y,
+                                                base_pose.orientation.z,
+                                                base_pose.orientation.w));
+
+  tf2::Transform grasp_pose_trans;
+  grasp_pose_trans.setOrigin(tf2::Vector3(grasp_pose.position.x,
+                                          grasp_pose.position.y,
+                                          grasp_pose.position.z));
+  grasp_pose_trans.setRotation(tf2::Quaternion(grasp_pose.orientation.x,
+                                                grasp_pose.orientation.y,
+                                                grasp_pose.orientation.z,
+                                                grasp_pose.orientation.w));
+
+  tf2::Transform base_grasp_pose_trans = base_pose_trans.inverse() * grasp_pose_trans;
+
+  // Call the inverse kin service curobo
+  auto request = std::make_shared<curobo_msgs::srv::Ik::Request>();
+
+  // Convert tf2::Transform to geometry_msgs::msg::Pose
+  // geometry_msgs::msg::Pose target_pose;
+  request->pose.position.x = base_grasp_pose_trans.getOrigin().x();
+  request->pose.position.y = base_grasp_pose_trans.getOrigin().y();
+  request->pose.position.z = base_grasp_pose_trans.getOrigin().z();
+  request->pose.orientation.x = base_grasp_pose_trans.getRotation().x();
+  request->pose.orientation.y = base_grasp_pose_trans.getRotation().y();
+  request->pose.orientation.z = base_grasp_pose_trans.getRotation().z();
+  request->pose.orientation.w = base_grasp_pose_trans.getRotation().w();
+
+  // request->poses.push_back(target_pose);
+  auto result_future = this->client_ik->async_send_request(request);
+
+  std::future_status status = result_future.wait_for(std::chrono::seconds(10)); // timeout to guarantee a graceful finish
+  if (status == std::future_status::ready)
+  {
+      auto res = result_future.get();
+      if (!res->success)
+      {
+          RCLCPP_ERROR(node_->get_logger(), "Ik batch failed");
+          return false;
+      }
+
+
+      // Check if the first joint state is valid
+      if (res->joint_states_valid.data)
+      {
+          // Extract joint positions from the first joint state
+          joint_soln = res->joint_states.position;
+          return true;
+      }
+      else{
+      RCLCPP_WARN(node_->get_logger(), "No valid IK solution found");
+      }
+
+
+      return false;
+  }
+  else
+  {
+      RCLCPP_ERROR(node_->get_logger(), "Service call timed out");
+      return false;
+  }
+  return false;
 }
