@@ -10,6 +10,7 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend>rclcpp</depend>
+  <depend>rclcpp_action</depend>
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
   <depend>tf2_geometry_msgs</depend>
@@ -26,6 +27,7 @@
   <depend>eigen3_cmake_module</depend>
   <depend>data_generation</depend>
   <depend>curobo_msgs</depend>
+  <depend>base_placement_interfaces</depend>
   <depend>qtbase5-dev</depend>
 
   <test_depend>ament_lint_auto</test_depend>

@@ -1,0 +1,12 @@
+# Service to add a named pose (waypoint/task pose)
+
+# Request
+string name                          # Unique name for the pose
+geometry_msgs/Pose pose             # The pose to add
+
+---
+
+# Response
+bool success
+string message
+int32 total_poses                   # Total number of poses after addition

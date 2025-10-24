@@ -1,0 +1,201 @@
+---
+title: Architecture Refactorée - Base Placement Plugin
+---
+graph TB
+    subgraph User["👤 Utilisateur"]
+        user_rviz["Interface RViz"]
+        user_cli["CLI / Scripts"]
+    end
+
+    subgraph RViz["🖼️ RViz2 Plugin (UI Layer)"]
+        add_waypoint["AddWayPoint<br/>(RViz Panel)<br/>━━━━━━━━<br/>🎯 Définir waypoints<br/>🖱️ Marqueurs interactifs"]
+        widget["BasePlacementWidget<br/>(Qt Widget)<br/>━━━━━━━━<br/>⚙️ Configuration UI<br/>📊 Affichage résultats"]
+
+        subgraph ROS2Clients["ROS2 Clients"]
+            action_client["Action Client<br/>find_base"]
+            srv_clients["Service Clients<br/>━━━━━━━━<br/>• update_reachability_map<br/>• get_union_map<br/>• update_parameters<br/>• add_named_pose<br/>• remove_named_pose<br/>• clear_maps<br/>• get_base_poses"]
+        end
+    end
+
+    subgraph Interfaces["📡 ROS2 Interfaces<br/>(base_placement_interfaces)"]
+        subgraph Messages["📨 Messages"]
+            ws_sphere_msg["WsSphere.msg"]
+            workspace_msg["WorkSpace.msg"]
+            pose_named_msg["PoseNamed.msg"]
+        end
+
+        subgraph Services["🔧 Services (7)"]
+            srv_update_reach["UpdateReachabilityMap"]
+            srv_union["GetUnionMap"]
+            srv_params["UpdateParameters"]
+            srv_add["AddNamedPose"]
+            srv_remove["RemoveNamedPose"]
+            srv_clear["ClearMaps"]
+            srv_get["GetBasePoses"]
+        end
+
+        subgraph Actions["⚡ Actions"]
+            action_find["FindBase<br/>━━━━━━━━<br/>Goal: task_poses, method<br/>Feedback: progress, iteration<br/>Result: base_poses, scores"]
+        end
+    end
+
+    subgraph Server["🖥️ BasePlacementServer<br/>(ROS2 Node)"]
+        server_node["BasePlacementServer<br/>━━━━━━━━<br/>📡 Action Server<br/>🔧 7 Service Servers<br/>⚙️ Threading Manager"]
+
+        subgraph ServerComponents["Composants Serveur"]
+            action_server["Action Server<br/>find_base"]
+            service_servers["Service Servers<br/>(7 services)"]
+        end
+    end
+
+    subgraph Core["🧠 Computation Engine<br/>(Pure C++ - No Qt/RViz)"]
+        core_class["BasePlacementCore<br/>━━━━━━━━<br/>💾 Reachability Data<br/>📍 Task Poses (named)<br/>🗺️ Union Maps<br/>📊 Results"]
+
+        subgraph Algorithms["5 Algorithmes de Placement"]
+            algo1["1️⃣ PCA<br/>Principal Component Analysis"]
+            algo2["2️⃣ Grasp Reachability Score<br/>Score d'accessibilité"]
+            algo3["3️⃣ IK Solution Score<br/>Cinématique inverse"]
+            algo4["4️⃣ Vertical Robot Model<br/>Alignement vertical"]
+            algo5["5️⃣ User Intuition<br/>Guidage manuel"]
+        end
+
+        subgraph CoreData["Données Internes"]
+            reach_data["Reachability Maps<br/>IRM & RM"]
+            poses_data["Named Poses<br/>map<string, Pose>"]
+            union_data["Union Maps<br/>Spheres + Scores"]
+            results_data["Computed Results<br/>base_poses + scores"]
+        end
+    end
+
+    subgraph Utils["📐 Bibliothèques Utilitaires"]
+        sphere_disc["SphereDiscretization<br/>━━━━━━━━<br/>🔮 Fibonacci<br/>🌀 Archimède<br/>📊 PCA<br/>🗺️ OctoMap"]
+        create_marker["CreateMarker<br/>━━━━━━━━<br/>🎨 Visualisation<br/>🤖 Modèles robots"]
+    end
+
+    subgraph External["🔗 Services Externes"]
+        ik_service["IK Service<br/>(curobo_msgs)<br/>━━━━━━━━<br/>🦾 Cinématique inverse"]
+        tf2["TF2<br/>━━━━━━━━<br/>🔄 Transformations"]
+    end
+
+    subgraph Storage["💾 Stockage"]
+        hdf5_files["Fichiers HDF5<br/>━━━━━━━━<br/>📊 Reachability Maps<br/>(IRM & RM)"]
+    end
+
+    %% ============================================================
+    %% CONNEXIONS UTILISATEUR
+    %% ============================================================
+    user_rviz -->|Interaction UI| add_waypoint
+    user_rviz -->|Configuration| widget
+    user_cli -->|CLI Commands| Interfaces
+
+    %% ============================================================
+    %% CONNEXIONS RVIZ → CLIENTS ROS2
+    %% ============================================================
+    add_waypoint --> action_client
+    add_waypoint --> srv_clients
+    widget --> action_client
+    widget --> srv_clients
+
+    %% ============================================================
+    %% CONNEXIONS CLIENTS → INTERFACES
+    %% ============================================================
+    action_client -.->|Goal/Feedback/Result| action_find
+    srv_clients -.->|Requests/Responses| Services
+
+    %% ============================================================
+    %% CONNEXIONS INTERFACES → SERVEUR
+    %% ============================================================
+    action_find -.->|Action Protocol| action_server
+    Services -.->|Service Protocol| service_servers
+
+    %% ============================================================
+    %% CONNEXIONS SERVEUR → CORE
+    %% ============================================================
+    action_server -->|execute_find_base()| core_class
+    service_servers -->|Appels méthodes| core_class
+
+    %% ============================================================
+    %% CONNEXIONS CORE → ALGORITHMES
+    %% ============================================================
+    core_class --> algo1
+    core_class --> algo2
+    core_class --> algo3
+    core_class --> algo4
+    core_class --> algo5
+
+    %% ============================================================
+    %% CONNEXIONS CORE → DONNÉES
+    %% ============================================================
+    core_class --> reach_data
+    core_class --> poses_data
+    core_class --> union_data
+    core_class --> results_data
+
+    %% ============================================================
+    %% CONNEXIONS CORE → UTILS
+    %% ============================================================
+    core_class --> sphere_disc
+    algo1 --> sphere_disc
+    algo2 --> sphere_disc
+
+    %% ============================================================
+    %% CONNEXIONS VISUALISATION
+    %% ============================================================
+    add_waypoint --> create_marker
+    widget --> create_marker
+
+    %% ============================================================
+    %% CONNEXIONS EXTERNES
+    %% ============================================================
+    core_class -.->|IK Requests| ik_service
+    core_class --> tf2
+    algo3 -.->|IK Validation| ik_service
+
+    %% ============================================================
+    %% CONNEXIONS STOCKAGE
+    %% ============================================================
+    core_class -.->|Load HDF5| hdf5_files
+    srv_update_reach -.->|File path| hdf5_files
+
+    %% ============================================================
+    %% FEEDBACK LOOP (ACTION)
+    %% ============================================================
+    algo2 -.->|Feedback Callback| action_server
+    algo3 -.->|Feedback Callback| action_server
+    action_server -.->|Publish Feedback| action_find
+    action_find -.->|Feedback Stream| action_client
+    action_client -.->|Update UI| widget
+
+    %% ============================================================
+    %% ANNOTATIONS
+    %% ============================================================
+    note1[/"✅ Séparation claire:<br/>UI ↔ ROS2 ↔ Calcul"/]
+    note2[/"📊 Feedback temps réel<br/>via Action ROS2"/]
+    note3[/"🔄 Réutilisable:<br/>BasePlacementCore<br/>sans dépendances UI"/]
+
+    note1 -.-> Server
+    note2 -.-> action_find
+    note3 -.-> Core
+
+    %% ============================================================
+    %% STYLES
+    %% ============================================================
+    classDef uiClass fill:#e1f5ff,stroke:#0288d1,stroke-width:3px
+    classDef interfaceClass fill:#fff3e0,stroke:#f57c00,stroke-width:3px
+    classDef serverClass fill:#f3e5f5,stroke:#7b1fa2,stroke-width:3px
+    classDef coreClass fill:#e8f5e9,stroke:#388e3c,stroke-width:3px
+    classDef algoClass fill:#fff9c4,stroke:#f9a825,stroke-width:2px
+    classDef dataClass fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    classDef utilClass fill:#e0e0e0,stroke:#616161,stroke-width:2px
+    classDef externalClass fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,stroke-dasharray: 5 5
+    classDef noteClass fill:#fffde7,stroke:#f57f17,stroke-width:2px
+
+    class add_waypoint,widget,action_client,srv_clients uiClass
+    class ws_sphere_msg,workspace_msg,pose_named_msg,srv_update_reach,srv_union,srv_params,srv_add,srv_remove,srv_clear,srv_get,action_find interfaceClass
+    class server_node,action_server,service_servers serverClass
+    class core_class coreClass
+    class algo1,algo2,algo3,algo4,algo5 algoClass
+    class reach_data,poses_data,union_data,results_data dataClass
+    class sphere_disc,create_marker utilClass
+    class ik_service,tf2,hdf5_files externalClass
+    class note1,note2,note3 noteClass

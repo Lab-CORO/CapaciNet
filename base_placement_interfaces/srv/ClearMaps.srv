@@ -1,0 +1,13 @@
+# Service to clear various maps and data
+
+# Request
+bool clear_union_map                # Clear the union map
+bool clear_reachability_data        # Clear loaded reachability data
+bool clear_task_poses               # Clear all task poses
+bool clear_computed_bases           # Clear computed base locations
+
+---
+
+# Response
+bool success
+string message

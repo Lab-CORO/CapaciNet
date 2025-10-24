@@ -1,0 +1,11 @@
+# Service to get the union map (combined reachability visualization)
+
+# Request
+bool compute_from_current_poses  # Compute union map based on current task poses
+
+---
+
+# Response
+bool success
+string message
+base_placement_interfaces/WorkSpace union_map  # The computed union map

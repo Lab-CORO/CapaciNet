@@ -1,0 +1,18 @@
+# Service to update base placement parameters
+
+# Request
+int32 method_index                    # Index of the method to use
+                                      # 0: PCA
+                                      # 1: GraspReachabilityScore
+                                      # 2: IKSolutionScore
+                                      # 3: VerticalRobotModel
+                                      # 4: UserIntuition
+int32 num_base_locations              # Number of base locations to compute
+int32 num_high_score_spheres          # Number of high-scoring spheres to consider
+int32 visualization_type              # Visualization type (0: Arrow, 1: RobotModel, 2: ArmModel)
+
+---
+
+# Response
+bool success
+string message

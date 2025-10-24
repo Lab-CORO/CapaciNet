@@ -1,0 +1,15 @@
+# Service to update the Inverse Reachability Map (IRM) and Reachability Map (RM)
+
+# Request
+string irm_file_path          # Path to the IRM HDF5 file
+string rm_file_path           # Path to the RM HDF5 file (optional)
+bool load_irm                 # Whether to load IRM
+bool load_rm                  # Whether to load RM
+
+---
+
+# Response
+bool success
+string message                # Status message
+int32 num_spheres_loaded      # Number of spheres loaded
+float32 resolution            # Resolution of the loaded map

@@ -1,0 +1,14 @@
+# Service to get the last computed base poses
+
+# Request
+# (empty request)
+
+---
+
+# Response
+bool success
+string message
+geometry_msgs/Pose[] base_poses     # Computed optimal base poses
+float64[] scores                    # Score for each base pose
+float64 best_score                  # Best overall score
+int32 best_index                    # Index of the best pose

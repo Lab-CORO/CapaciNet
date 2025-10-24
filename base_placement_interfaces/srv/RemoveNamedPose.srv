@@ -1,0 +1,11 @@
+# Service to remove a named pose by name
+
+# Request
+string name                          # Name of the pose to remove
+
+---
+
+# Response
+bool success
+string message
+int32 total_poses                   # Total number of poses after removal

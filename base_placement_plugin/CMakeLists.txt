@@ -13,6 +13,7 @@ endif()
 # Find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_action REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
@@ -26,6 +27,7 @@ find_package(rviz_rendering REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(data_generation REQUIRED)
 find_package(curobo_msgs REQUIRED)
+find_package(base_placement_interfaces REQUIRED)
 # find_package(moveit_ros_planning_interface REQUIRED)
 # find_package(moveit_core REQUIRED)
 # find_package(moveit_ros_planning REQUIRED)
@@ -62,6 +64,7 @@ include_directories(
 # Dependencies list for ament
 set(dependencies
   rclcpp
+  rclcpp_action
   tf2
   tf2_ros
   tf2_geometry_msgs
@@ -73,6 +76,7 @@ set(dependencies
   rviz_default_plugins
   rviz_rendering
   pluginlib
+  base_placement_interfaces
 #   moveit_ros_planning_interface
 #   moveit_core
 #   moveit_ros_planning
@@ -96,7 +100,13 @@ set(HEADER_FILES_MOC
 ## Generate MOC files
 qt5_wrap_cpp(MOC_FILES ${HEADER_FILES_MOC})
 
-## Source files
+## Core computation files (no Qt dependency)
+set(CORE_SOURCE_FILES
+  src/base_placement_core.cpp
+  src/sphere_discretization.cpp
+)
+
+## Source files for RViz plugin
 set(SOURCE_FILES
   src/place_base.cpp
   src/add_way_point.cpp
@@ -143,12 +153,42 @@ target_link_libraries(${PROJECT_NAME}
 # Prevent pluginlib from using boost
 target_compile_definitions(${PROJECT_NAME} PUBLIC "PLUGINLIB__DISABLE_BOOST_FUNCTIONS")
 
+## Build the standalone server executable
+add_executable(base_placement_server
+  src/base_placement_server.cpp
+  ${CORE_SOURCE_FILES}
+)
+
+target_include_directories(base_placement_server PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
+ament_target_dependencies(base_placement_server
+  ${dependencies}
+  curobo_msgs
+)
+
+target_link_libraries(base_placement_server
+  ${HDF5_LIBRARIES}
+  ${PCL_LIBRARIES}
+  ${OCTOMAP_LIBRARIES}
+  yaml-cpp
+  ${HighFive_LIBRARIES}
+  data_generation::utils
+)
+
 ## Install
 install(TARGETS ${PROJECT_NAME}
   EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
+)
+
+# Install the server executable to lib/<package_name>/ for ros2 run to find it
+install(TARGETS base_placement_server
+  DESTINATION lib/${PROJECT_NAME}
 )
 
 install(DIRECTORY include/

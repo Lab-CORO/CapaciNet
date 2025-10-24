@@ -15,8 +15,18 @@
 
 #include "curobo_msgs/srv/ik.hpp"
 
+// ROS2 action and service interfaces
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp_action/rclcpp_action.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
+#include <base_placement_interfaces/action/find_base.hpp>
+#include <base_placement_interfaces/srv/update_reachability_map.hpp>
+#include <base_placement_interfaces/srv/get_union_map.hpp>
+#include <base_placement_interfaces/srv/update_parameters.hpp>
+#include <base_placement_interfaces/srv/add_named_pose.hpp>
+#include <base_placement_interfaces/srv/remove_named_pose.hpp>
+#include <base_placement_interfaces/srv/clear_maps.hpp>
+#include <base_placement_interfaces/srv/get_base_poses.hpp>
 
 #include <QObject>
 #include <QTimer>
@@ -237,6 +247,39 @@ protected:
 
   rclcpp::Client<curobo_msgs::srv::Ik>::SharedPtr client_ik;
   rclcpp::CallbackGroup::SharedPtr client_cb_group_;
+
+  // ============================================================
+  // ACTION AND SERVICE CLIENTS FOR NEW ARCHITECTURE
+  // ============================================================
+
+  //! Type aliases for action client
+  using FindBaseAction = base_placement_interfaces::action::FindBase;
+  using GoalHandleFindBase = rclcpp_action::ClientGoalHandle<FindBaseAction>;
+
+  //! Action client for find_base
+  rclcpp_action::Client<FindBaseAction>::SharedPtr find_base_action_client_;
+
+  //! Service clients
+  rclcpp::Client<base_placement_interfaces::srv::UpdateReachabilityMap>::SharedPtr update_reachability_client_;
+  rclcpp::Client<base_placement_interfaces::srv::GetUnionMap>::SharedPtr get_union_map_client_;
+  rclcpp::Client<base_placement_interfaces::srv::UpdateParameters>::SharedPtr update_parameters_client_;
+  rclcpp::Client<base_placement_interfaces::srv::AddNamedPose>::SharedPtr add_named_pose_client_;
+  rclcpp::Client<base_placement_interfaces::srv::RemoveNamedPose>::SharedPtr remove_named_pose_client_;
+  rclcpp::Client<base_placement_interfaces::srv::ClearMaps>::SharedPtr clear_maps_client_;
+  rclcpp::Client<base_placement_interfaces::srv::GetBasePoses>::SharedPtr get_base_poses_client_;
+
+  //! Callback group for service clients
+  rclcpp::CallbackGroup::SharedPtr service_cb_group_;
+
+  //! Goal handle for tracking action execution
+  std::shared_ptr<GoalHandleFindBase> goal_handle_;
+
+  //! Action callbacks
+  void goalResponseCallback(const GoalHandleFindBase::SharedPtr& goal_handle);
+  void feedbackCallback(
+    GoalHandleFindBase::SharedPtr,
+    const std::shared_ptr<const FindBaseAction::Feedback> feedback);
+  void resultCallback(const GoalHandleFindBase::WrappedResult& result);
 
 };
 

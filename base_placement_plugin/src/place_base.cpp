@@ -33,6 +33,37 @@ PlaceBase::PlaceBase(std::shared_ptr<rclcpp::Node> node, QObject* parent)
   this->client_ik = node_->create_client<curobo_msgs::srv::Ik>("/curobo_ik/ik_pose", rmw_qos_profile_services_default,
                                                                   client_cb_group_);
 
+  // Create callback group for service clients
+  service_cb_group_ = node_->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+
+  // Initialize action client
+  find_base_action_client_ = rclcpp_action::create_client<FindBaseAction>(
+    node_, "find_base", service_cb_group_);
+
+  // Initialize service clients
+  update_reachability_client_ = node_->create_client<base_placement_interfaces::srv::UpdateReachabilityMap>(
+    "update_reachability_map", rmw_qos_profile_services_default, service_cb_group_);
+
+  get_union_map_client_ = node_->create_client<base_placement_interfaces::srv::GetUnionMap>(
+    "get_union_map", rmw_qos_profile_services_default, service_cb_group_);
+
+  update_parameters_client_ = node_->create_client<base_placement_interfaces::srv::UpdateParameters>(
+    "update_parameters", rmw_qos_profile_services_default, service_cb_group_);
+
+  add_named_pose_client_ = node_->create_client<base_placement_interfaces::srv::AddNamedPose>(
+    "add_named_pose", rmw_qos_profile_services_default, service_cb_group_);
+
+  remove_named_pose_client_ = node_->create_client<base_placement_interfaces::srv::RemoveNamedPose>(
+    "remove_named_pose", rmw_qos_profile_services_default, service_cb_group_);
+
+  clear_maps_client_ = node_->create_client<base_placement_interfaces::srv::ClearMaps>(
+    "clear_maps", rmw_qos_profile_services_default, service_cb_group_);
+
+  get_base_poses_client_ = node_->create_client<base_placement_interfaces::srv::GetBasePoses>(
+    "get_base_poses", rmw_qos_profile_services_default, service_cb_group_);
+
+  RCLCPP_INFO(node_->get_logger(), "PlaceBase initialized with action/service clients");
+
 }
 
 PlaceBase::~PlaceBase()
@@ -182,24 +213,45 @@ void PlaceBase::getBasePoses(std::vector<geometry_msgs::msg::Pose> base_poses)
 
 void PlaceBase::setBasePlaceParams(int base_loc_size, int high_score_sp)
 {
-  RCLCPP_INFO(node_->get_logger(), 
+  RCLCPP_INFO(node_->get_logger(),
     "Base Placement parameters from UI:\n Number of base locations: %d\n Number of HighScore Spheres: %d",
     base_loc_size, high_score_sp);
 
-  BASE_LOC_SIZE_ = base_loc_size;
-  HIGH_SCORE_SP_ = high_score_sp;
-  
-  if (BASE_LOC_SIZE_ <= 0)
+  // Validate parameters locally
+  if (base_loc_size <= 0)
   {
-    RCLCPP_ERROR(node_->get_logger(), 
+    RCLCPP_ERROR(node_->get_logger(),
       "Please provide a valid number of how many base locations do you need.");
+    return;
   }
 
-  if (HIGH_SCORE_SP_ <= 0)
+  if (high_score_sp <= 0)
   {
-    RCLCPP_ERROR(node_->get_logger(), 
+    RCLCPP_ERROR(node_->get_logger(),
       "Please provide a valid number of how many spheres do you need to create valid base poses");
+    return;
   }
+
+  // Update local variables
+  BASE_LOC_SIZE_ = base_loc_size;
+  HIGH_SCORE_SP_ = high_score_sp;
+
+  // Update parameters on server via service
+  if (!update_parameters_client_->wait_for_service(std::chrono::seconds(1))) {
+    RCLCPP_WARN(node_->get_logger(), "update_parameters service not available, parameters only updated locally");
+    return;
+  }
+
+  auto request = std::make_shared<base_placement_interfaces::srv::UpdateParameters::Request>();
+  request->method_index = selected_method_;
+  request->num_base_locations = base_loc_size;
+  request->num_high_score_spheres = high_score_sp;
+
+  auto result_future = update_parameters_client_->async_send_request(request);
+
+  // Don't block - parameters are already set locally
+  // The service call ensures the server is also updated
+  RCLCPP_INFO(node_->get_logger(), "Sent parameter update request to server");
 }
 
 void PlaceBase::createSpheres(std::multimap<std::vector<double>, std::vector<double>> basePoses,
@@ -401,101 +453,165 @@ bool PlaceBase::findbase(std::vector<geometry_msgs::msg::Pose> grasp_poses)
 {
   Q_EMIT basePlacementProcessStarted();
   score_ = 0;
-  
-  if (grasp_poses.size() == 0)
+
+  if (grasp_poses.empty())
   {
     RCLCPP_ERROR(node_->get_logger(), "Please provide at least one grasp pose.");
     Q_EMIT basePlacementProcessFinished();
     return false;
   }
-  else if (selected_method_ == 4)
-  {
-    GRASP_POSES_ = grasp_poses;
-    BasePlaceMethodHandler();
-    
-    for (size_t i = 0; i < final_base_poses.size(); ++i)
-    {
-      tf2::Quaternion quat(final_base_poses[i].orientation.x, final_base_poses[i].orientation.y,
-                           final_base_poses[i].orientation.z, final_base_poses[i].orientation.w);
-      tf2::Matrix3x3 m(quat);
 
-      double roll, pitch, yaw;
-      m.getRPY(roll, pitch, yaw);
-      RCLCPP_INFO(node_->get_logger(), 
-        "Optimal base pose[%zu]: Position: %f, %f, %f, Orientation: %f, %f, %f", 
-        i + 1, final_base_poses[i].position.x, final_base_poses[i].position.y, 
-        final_base_poses[i].position.z, roll, pitch, yaw);
-    }
-    OuputputVizHandler(final_base_poses);
+  // Wait for action server to be available
+  if (!find_base_action_client_->wait_for_action_server(std::chrono::seconds(5))) {
+    RCLCPP_ERROR(node_->get_logger(), "Action server not available after waiting");
+    Q_EMIT basePlacementProcessFinished();
+    return false;
   }
-  else
-  {
-    if (PoseColFilter.size() == 0)
-    {
-      RCLCPP_INFO(node_->get_logger(), 
-        "No Inverse Reachability Map found. Please provide an Inverse Reachability map.");
-    }
-    else
-    {
-      sphere_discretization::SphereDiscretization sd;
-      baseTrnsCol.clear();
-      sphereColor.clear();
-      highScoreSp.clear();
+
+  // ============================================================
+  // IMPORTANT: Calculate union map BEFORE sending goal
+  // ============================================================
+  if (PoseColFilter.size() > 0 && selected_method_ != 4) {
+    // UserIntuition (method 4) doesn't need reachability data
+    sphere_discretization::SphereDiscretization sd;
+    baseTrnsCol.clear();
+    sphereColor.clear();
+    highScoreSp.clear();
+
+    RCLCPP_INFO(node_->get_logger(),
+      "Calculating union map from %zu IRM poses with %zu task poses...",
+      PoseColFilter.size(), grasp_poses.size());
+
+    if (selected_method_ == 3) {
+      // VerticalRobotModel needs robot base transformation
       robot_PoseColfilter.clear();
-      GRASP_POSES_.clear();
-      final_base_poses.clear();
-      GRASP_POSES_ = grasp_poses;
-
-      if (selected_method_ == 3)
-      {
-        transformToRobotbase(PoseColFilter, robot_PoseColfilter);
-        sd.associatePose(baseTrnsCol, grasp_poses, robot_PoseColfilter, res);
-        RCLCPP_INFO(node_->get_logger(), "Size of baseTrnsCol dataset: %lu", baseTrnsCol.size());
-        createSpheres(baseTrnsCol, sphereColor, highScoreSp, true);
-      }
-      else
-      {
-        sd.associatePose(baseTrnsCol, grasp_poses, PoseColFilter, res);
-        RCLCPP_INFO(node_->get_logger(), "Size of baseTrnsCol dataset: %lu", baseTrnsCol.size());
-        createSpheres(baseTrnsCol, sphereColor, highScoreSp, false);
-      }
-
-      RCLCPP_INFO(node_->get_logger(), "Union map has been created. Can now visualize Union Map.");
-      RCLCPP_INFO(node_->get_logger(), "Poses in Union Map: %lu", baseTrnsCol.size());
-      RCLCPP_INFO(node_->get_logger(), "Spheres in Union Map: %lu", sphereColor.size());
-
-      BasePlaceMethodHandler();
-
-      for (size_t i = 0; i < final_base_poses.size(); ++i)
-      {
-        tf2::Quaternion quat(final_base_poses[i].orientation.x, final_base_poses[i].orientation.y,
-                             final_base_poses[i].orientation.z, final_base_poses[i].orientation.w);
-        tf2::Matrix3x3 m(quat);
-
-        double roll, pitch, yaw;
-        m.getRPY(roll, pitch, yaw);
-        RCLCPP_INFO(node_->get_logger(), 
-          "Optimal base pose[%zu]: Position: %f, %f, %f, Orientation: %f, %f, %f", 
-          i + 1, final_base_poses[i].position.x, final_base_poses[i].position.y, 
-          final_base_poses[i].position.z, roll, pitch, yaw);
-      }
-
-      OuputputVizHandler(final_base_poses);
+      transformToRobotbase(PoseColFilter, robot_PoseColfilter);
+      sd.associatePose(baseTrnsCol, grasp_poses, robot_PoseColfilter, res);
+      createSpheres(baseTrnsCol, sphereColor, highScoreSp, true);
+    } else {
+      // PCA, GraspReachabilityScore, IKSolutionScore use arm base
+      sd.associatePose(baseTrnsCol, grasp_poses, PoseColFilter, res);
+      createSpheres(baseTrnsCol, sphereColor, highScoreSp, false);
     }
+
+    RCLCPP_INFO(node_->get_logger(),
+      "Union map created: %zu poses, %zu spheres, %zu high-score spheres",
+      baseTrnsCol.size(), sphereColor.size(), highScoreSp.size());
+
+    // TODO: Send this data to server via update_reachability_map service
+    // For now, we rely on the local computation
   }
 
-  tf2::Quaternion quat(best_pose_.orientation.x, best_pose_.orientation.y, 
-                       best_pose_.orientation.z, best_pose_.orientation.w);
-  tf2::Matrix3x3 m(quat);
-  double roll, pitch, yaw;
-  m.getRPY(roll, pitch, yaw);
-  RCLCPP_INFO(node_->get_logger(), 
-    "Best pose for this solution: Position: %f, %f, %f, Orientation: %f, %f, %f",
-    best_pose_.position.x, best_pose_.position.y, best_pose_.position.z, roll, pitch, yaw);
+  RCLCPP_INFO(node_->get_logger(), "Sending goal to base_placement_server with %zu task poses",
+              grasp_poses.size());
 
-  Q_EMIT basePlacementProcessCompleted(score_);
-  Q_EMIT basePlacementProcessFinished();
-  RCLCPP_INFO(node_->get_logger(), "FindBase Task Finished");
+  // Create and send goal
+  auto goal_msg = FindBaseAction::Goal();
+
+  // Convert Pose vector to PoseNamed vector
+  for (size_t i = 0; i < grasp_poses.size(); ++i) {
+    base_placement_interfaces::msg::PoseNamed named_pose;
+    named_pose.name = "task_pose_" + std::to_string(i);
+    named_pose.pose = grasp_poses[i];
+    goal_msg.task_poses.push_back(named_pose);
+  }
+
+  goal_msg.method_index = selected_method_;
+  goal_msg.num_base_locations = BASE_LOC_SIZE_;
+  goal_msg.num_high_score_spheres = HIGH_SCORE_SP_;
+
+  // If we have computed high-score spheres locally, send them to the server
+  if (!highScoreSp.empty() && selected_method_ != 4) {
+    goal_msg.use_provided_spheres = true;
+    // Flatten the high-score sphere positions into a 1D array
+    for (const auto& sphere : highScoreSp) {
+      if (sphere.size() >= 3) {
+        goal_msg.high_score_sphere_data.push_back(sphere[0]); // x
+        goal_msg.high_score_sphere_data.push_back(sphere[1]); // y
+        goal_msg.high_score_sphere_data.push_back(sphere[2]); // z
+      }
+    }
+    RCLCPP_INFO(node_->get_logger(),
+      "Sending %zu pre-computed high-score spheres to server",
+      highScoreSp.size());
+  } else {
+    goal_msg.use_provided_spheres = false;
+  }
+
+  // If we have computed union map locally, send it to the server
+  if (!baseTrnsCol.empty() && selected_method_ != 4) {
+    goal_msg.use_provided_union_map = true;
+
+    // Flatten the multimap data
+    sphere_discretization::SphereDiscretization sd;
+    std::vector<double> current_key;
+    int pose_count = 0;
+
+    for (auto it = baseTrnsCol.begin(); it != baseTrnsCol.end(); ++it) {
+      // Check if we moved to a new key
+      if (current_key.empty() || current_key != it->first) {
+        // Save the count for the previous key
+        if (!current_key.empty()) {
+          goal_msg.base_trns_col_counts.push_back(pose_count);
+        }
+
+        // Start new key
+        current_key = it->first;
+        pose_count = 0;
+
+        // Add key (sphere position)
+        for (const auto& val : it->first) {
+          goal_msg.base_trns_col_keys.push_back(val);
+        }
+      }
+
+      // Add value (pose)
+      geometry_msgs::msg::Pose pose;
+      sd.convertVectorToPose(it->second, pose);
+      goal_msg.base_trns_col_values.push_back(pose.position.x);
+      goal_msg.base_trns_col_values.push_back(pose.position.y);
+      goal_msg.base_trns_col_values.push_back(pose.position.z);
+      goal_msg.base_trns_col_values.push_back(pose.orientation.x);
+      goal_msg.base_trns_col_values.push_back(pose.orientation.y);
+      goal_msg.base_trns_col_values.push_back(pose.orientation.z);
+      goal_msg.base_trns_col_values.push_back(pose.orientation.w);
+
+      pose_count++;
+    }
+
+    // Don't forget the last count
+    if (!current_key.empty()) {
+      goal_msg.base_trns_col_counts.push_back(pose_count);
+    }
+
+    RCLCPP_INFO(node_->get_logger(),
+      "Sending union map with %zu poses across %zu spheres to server",
+      baseTrnsCol.size(), goal_msg.base_trns_col_counts.size());
+  } else {
+    goal_msg.use_provided_union_map = false;
+  }
+
+  // Set up send options with callbacks
+  auto send_goal_options = rclcpp_action::Client<FindBaseAction>::SendGoalOptions();
+
+  send_goal_options.goal_response_callback =
+    std::bind(&PlaceBase::goalResponseCallback, this, std::placeholders::_1);
+
+  send_goal_options.feedback_callback =
+    std::bind(&PlaceBase::feedbackCallback, this, std::placeholders::_1, std::placeholders::_2);
+
+  send_goal_options.result_callback =
+    std::bind(&PlaceBase::resultCallback, this, std::placeholders::_1);
+
+  // Send the goal asynchronously
+  RCLCPP_INFO(node_->get_logger(),
+    "Sending goal: method=%d, num_base_locations=%d, num_high_score_spheres=%d",
+    selected_method_, BASE_LOC_SIZE_, HIGH_SCORE_SP_);
+
+  find_base_action_client_->async_send_goal(goal_msg, send_goal_options);
+
+  RCLCPP_INFO(node_->get_logger(), "Goal sent, waiting for server response...");
+
   return true;
 }
 
@@ -946,6 +1062,16 @@ void PlaceBase::setReachabilityData(
 
   RCLCPP_INFO(node_->get_logger(), "Current total - Poses: %lu, Spheres: %lu, Resolution: %f",
               PoseColFilter.size(), SphereCol.size(), res);
+
+  // ============================================================
+  // NOTE: Reachability data is now passed to server via the action goal
+  // when findbase() is called. We compute union map and high-score spheres
+  // locally and send them in the goal message.
+  // ============================================================
+
+  RCLCPP_INFO(node_->get_logger(),
+    "Reachability data stored locally (resolution: %f). Will be sent to server when computing base placement.",
+    res);
 }
 
 void PlaceBase::ShowUnionMap(bool /* show_map */)
@@ -981,10 +1107,57 @@ void PlaceBase::ShowUnionMap(bool /* show_map */)
   }
 }
 
-void PlaceBase::clearUnionMap(bool /* clear_map */)
+void PlaceBase::clearUnionMap(bool clear_map)
 {
-  RCLCPP_INFO(node_->get_logger(), "Clearing Map:");
-  // TODO: Implement clearing functionality
+  if (!clear_map) {
+    return;
+  }
+
+  RCLCPP_INFO(node_->get_logger(), "Clearing maps via service...");
+
+  // Wait for service to be available
+  if (!clear_maps_client_->wait_for_service(std::chrono::seconds(2))) {
+    RCLCPP_ERROR(node_->get_logger(), "clear_maps service not available");
+    // Clear local data anyway
+    baseTrnsCol.clear();
+    sphereColor.clear();
+    highScoreSp.clear();
+    robot_PoseColfilter.clear();
+    GRASP_POSES_.clear();
+    final_base_poses.clear();
+    return;
+  }
+
+  // Call service
+  auto request = std::make_shared<base_placement_interfaces::srv::ClearMaps::Request>();
+  request->clear_union_map = true;
+  request->clear_task_poses = true;
+
+  auto result_future = clear_maps_client_->async_send_request(request);
+
+  // Wait for result (with timeout)
+  if (rclcpp::spin_until_future_complete(node_, result_future, std::chrono::seconds(5))
+      == rclcpp::FutureReturnCode::SUCCESS)
+  {
+    auto response = result_future.get();
+    if (response->success) {
+      RCLCPP_INFO(node_->get_logger(), "Maps cleared successfully: %s", response->message.c_str());
+    } else {
+      RCLCPP_ERROR(node_->get_logger(), "Failed to clear maps: %s", response->message.c_str());
+    }
+  } else {
+    RCLCPP_ERROR(node_->get_logger(), "Failed to call clear_maps service");
+  }
+
+  // Clear local data
+  baseTrnsCol.clear();
+  sphereColor.clear();
+  highScoreSp.clear();
+  robot_PoseColfilter.clear();
+  GRASP_POSES_.clear();
+  final_base_poses.clear();
+
+  RCLCPP_INFO(node_->get_logger(), "Local maps cleared");
 }
 
 bool PlaceBase::isIkSuccesswithTransformedBase(const geometry_msgs::msg::Pose& base_pose,
@@ -1060,4 +1233,80 @@ bool PlaceBase::isIkSuccesswithTransformedBase(const geometry_msgs::msg::Pose& b
       return false;
   }
   return false;
+}
+
+// ============================================================
+// ACTION CLIENT CALLBACKS
+// ============================================================
+
+void PlaceBase::goalResponseCallback(const GoalHandleFindBase::SharedPtr& goal_handle)
+{
+  if (!goal_handle) {
+    RCLCPP_ERROR(node_->get_logger(), "Goal was rejected by server");
+    Q_EMIT basePlacementProcessFinished();
+  } else {
+    RCLCPP_INFO(node_->get_logger(), "Goal accepted by server, waiting for result");
+    goal_handle_ = goal_handle;
+  }
+}
+
+void PlaceBase::feedbackCallback(
+  GoalHandleFindBase::SharedPtr,
+  const std::shared_ptr<const FindBaseAction::Feedback> feedback)
+{
+  RCLCPP_INFO(node_->get_logger(),
+    "Feedback: phase='%s', iteration=%d/%d, progress=%.1f%%, best_score=%.2f",
+    feedback->current_phase.c_str(),
+    feedback->iteration,
+    feedback->total_iterations,
+    feedback->progress_percentage,
+    feedback->current_best_score);
+
+  // You can emit Qt signals here to update the GUI with progress
+  // For example: Q_EMIT updateProgress(feedback->progress_percentage);
+}
+
+void PlaceBase::resultCallback(const GoalHandleFindBase::WrappedResult& result)
+{
+  switch (result.code) {
+    case rclcpp_action::ResultCode::SUCCEEDED:
+      RCLCPP_INFO(node_->get_logger(), "Goal succeeded!");
+
+      // Store the results
+      final_base_poses.clear();
+      for (const auto& pose : result.result->base_poses) {
+        final_base_poses.push_back(pose);
+      }
+
+      score_ = result.result->best_score;
+
+      RCLCPP_INFO(node_->get_logger(),
+        "Received %zu base poses with best score: %.2f, computation time: %.3fs",
+        final_base_poses.size(),
+        result.result->best_score,
+        result.result->computation_time_seconds);
+
+      // Emit signals to update GUI
+      Q_EMIT basePlacementProcessCompleted(score_);
+      Q_EMIT basePlacementProcessFinished();
+
+      // Visualize the results based on selected output type
+      OuputputVizHandler(final_base_poses);
+      break;
+
+    case rclcpp_action::ResultCode::ABORTED:
+      RCLCPP_ERROR(node_->get_logger(), "Goal was aborted: %s", result.result->message.c_str());
+      Q_EMIT basePlacementProcessFinished();
+      break;
+
+    case rclcpp_action::ResultCode::CANCELED:
+      RCLCPP_ERROR(node_->get_logger(), "Goal was canceled");
+      Q_EMIT basePlacementProcessFinished();
+      break;
+
+    default:
+      RCLCPP_ERROR(node_->get_logger(), "Unknown result code");
+      Q_EMIT basePlacementProcessFinished();
+      break;
+  }
 }

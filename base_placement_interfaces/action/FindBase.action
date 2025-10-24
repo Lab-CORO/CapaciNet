@@ -1,0 +1,35 @@
+# Action to find optimal base placement with iterative feedback
+
+# Goal
+base_placement_interfaces/PoseNamed[] task_poses  # Named task poses to consider
+int32 method_index                                # Algorithm to use (0-4)
+int32 num_base_locations                          # Number of base locations to find
+int32 num_high_score_spheres                      # Number of high-score spheres to use
+float64[] high_score_sphere_data                  # Flattened high-score sphere positions [x1,y1,z1,x2,y2,z2,...]
+bool use_provided_spheres                         # If true, use high_score_sphere_data instead of computing
+float64[] base_trns_col_keys                      # Union map sphere keys (flattened [x1,y1,z1,...])
+float64[] base_trns_col_values                    # Union map pose values (flattened [x,y,z,qx,qy,qz,qw,...])
+int32[] base_trns_col_counts                      # Number of poses per sphere key
+bool use_provided_union_map                       # If true, use provided union map data
+
+---
+
+# Result
+bool success
+string message
+geometry_msgs/Pose[] base_poses                   # Computed optimal base poses
+float64[] scores                                  # Score for each base pose
+float64 best_score                                # Best overall score
+int32 best_index                                  # Index of the best base pose
+float64 computation_time_seconds                  # Total computation time
+
+---
+
+# Feedback
+string current_phase                              # Current computation phase
+int32 iteration                                   # Current iteration number
+int32 total_iterations                            # Total expected iterations
+float64 progress_percentage                       # Progress (0.0 to 100.0)
+string status_message                             # Detailed status message
+int32 candidates_evaluated                        # Number of candidates evaluated so far
+float64 current_best_score                        # Best score found so far
