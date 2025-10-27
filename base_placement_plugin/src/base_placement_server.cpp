@@ -56,6 +56,10 @@ BasePlacementServer::BasePlacementServer(const rclcpp::NodeOptions& options)
     std::bind(&BasePlacementServer::handle_get_base_poses, this, _1, _2)
   );
 
+  // Create publishers
+  pub_irm_ = this->create_publisher<reachability_map_visualizer::msg::WorkSpace>("irm", 1);
+  pub_base_find_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("base_find_markers", 1);
+
   RCLCPP_INFO(this->get_logger(), "BasePlacementServer initialized successfully");
   RCLCPP_INFO(this->get_logger(), "  Action: find_base");
   RCLCPP_INFO(this->get_logger(), "  Services: update_reachability_map, get_union_map, update_parameters,");
@@ -255,7 +259,7 @@ void BasePlacementServer::execute_find_base(const std::shared_ptr<GoalHandleFind
   result->best_score = computation_result.best_score;
   result->best_index = computation_result.best_index;
   result->computation_time_seconds = computation_result.computation_time_seconds;
-
+  publish_find_base(result->base_poses);
   if (result->success) {
     goal_handle->succeed(result);
     RCLCPP_INFO(this->get_logger(), "Goal succeeded with best score: %.4f", result->best_score);
@@ -264,7 +268,47 @@ void BasePlacementServer::execute_find_base(const std::shared_ptr<GoalHandleFind
     RCLCPP_WARN(this->get_logger(), "Goal aborted: %s", result->message.c_str());
   }
 }
+void BasePlacementServer::publish_find_base(const std::vector<geometry_msgs::msg::Pose>& task_poses)
+{
+  // Create MarkerArray message
+  visualization_msgs::msg::MarkerArray markers;
 
+  // Add an arrow for each task pose
+  int marker_id = 0;
+  for (const auto& pose : task_poses)
+  {
+    visualization_msgs::msg::Marker marker;
+    marker.header.frame_id = "base_link";
+    marker.header.stamp = this->get_clock()->now();
+    marker.ns = "task_poses";
+    marker.id = marker_id++;
+    marker.type = visualization_msgs::msg::Marker::ARROW;
+    marker.action = visualization_msgs::msg::Marker::ADD;
+
+    // Set arrow scale
+    marker.scale.x = 0.3;  // Arrow length
+    marker.scale.y = 0.03; // Arrow width
+    marker.scale.z = 0.03; // Arrow height
+
+    // Set pose
+    marker.pose = pose;
+
+    // Set color (green)
+    marker.color.r = 0.0;
+    marker.color.g = 1.0;
+    marker.color.b = 0.0;
+    marker.color.a = 1.0;
+
+    // Set lifetime (0 = forever)
+    marker.lifetime = rclcpp::Duration::from_seconds(0);
+
+    markers.markers.push_back(marker);
+  }
+
+  // Publish the markers
+  pub_base_find_->publish(markers);
+  RCLCPP_INFO(this->get_logger(), "Published %zu task pose markers", task_poses.size());
+} 
 // ============================================================
 // SERVICE CALLBACKS
 // ============================================================
@@ -274,27 +318,66 @@ void BasePlacementServer::handle_update_reachability_map(
   std::shared_ptr<base_placement_interfaces::srv::UpdateReachabilityMap::Response> response)
 {
   RCLCPP_INFO(this->get_logger(), "Service call: update_reachability_map");
+  RCLCPP_INFO(this->get_logger(), "  IRM file: %s", request->irm_file_path.c_str());
+
+  if (!request->rm_file_path.empty()) {
+    RCLCPP_INFO(this->get_logger(), "  RM file: %s", request->rm_file_path.c_str());
+  }
 
   bool success = false;
 
   if (request->load_irm) {
+    // The core will handle all file loading logic
     success = core_->loadReachabilityFromFile(request->irm_file_path, request->rm_file_path);
+
+    if (success) {
+      // Get actual data from core for response
+      response->resolution = core_->getResolution();
+      response->num_spheres_loaded = static_cast<int32_t>(core_->getSphereCollection().size());
+      response->message = "Reachability map loaded successfully";
+      this->publish_irm();
+      RCLCPP_INFO(this->get_logger(),
+                  "Successfully loaded reachability data: %d spheres, resolution=%.4f m",
+                  response->num_spheres_loaded, response->resolution);
+    } else {
+      response->message = "Failed to load reachability map from provided file paths";
+      response->resolution = 0.0;
+      response->num_spheres_loaded = 0;
+      RCLCPP_ERROR(this->get_logger(), "Failed to load reachability map");
+    }
+  } else {
+    response->success = false;
+    response->message = "load_irm flag not set";
+    response->resolution = 0.0;
+    response->num_spheres_loaded = 0;
+    RCLCPP_WARN(this->get_logger(), "load_irm flag not set in request");
   }
 
   response->success = success;
-  if (success) {
-    response->message = "Reachability map loaded successfully";
-    response->resolution = 0.0;  // TODO: get from core
-    response->num_spheres_loaded = 0;  // TODO: get from core
-  } else {
-    response->message = "Failed to load reachability map";
-    response->resolution = 0.0;
-    response->num_spheres_loaded = 0;
-  }
-
-  RCLCPP_INFO(this->get_logger(), "Response: %s", response->message.c_str());
 }
 
+// Send the IRM map on topic
+void BasePlacementServer::publish_irm()
+{
+  auto ws_msg = std::make_shared<reachability_map_visualizer::msg::WorkSpace>();
+
+  ws_msg->header.stamp = this->get_clock()->now();
+  ws_msg->header.frame_id = "base_link";
+  ws_msg->resolution = core_->getResolution();
+
+  for (const auto& sphere_pair : core_->getSphereCollection())
+  {
+    reachability_map_visualizer::msg::WsSphere wss;
+    wss.point.x = (sphere_pair.first)[0];
+    wss.point.y = (sphere_pair.first)[1];
+    wss.point.z = (sphere_pair.first)[2];
+    wss.ri = sphere_pair.second;
+    ws_msg->ws_spheres.push_back(wss);
+  }
+
+  pub_irm_->publish(*ws_msg);
+  RCLCPP_INFO(this->get_logger(), "Published IRM with %zu spheres", ws_msg->ws_spheres.size());
+}
 void BasePlacementServer::handle_get_union_map(
   const std::shared_ptr<base_placement_interfaces::srv::GetUnionMap::Request> request,
   std::shared_ptr<base_placement_interfaces::srv::GetUnionMap::Response> response)

@@ -28,6 +28,7 @@ find_package(pluginlib REQUIRED)
 find_package(data_generation REQUIRED)
 find_package(curobo_msgs REQUIRED)
 find_package(base_placement_interfaces REQUIRED)
+find_package(reachability_map_visualizer REQUIRED)
 # find_package(moveit_ros_planning_interface REQUIRED)
 # find_package(moveit_core REQUIRED)
 # find_package(moveit_ros_planning REQUIRED)
@@ -77,6 +78,7 @@ set(dependencies
   rviz_rendering
   pluginlib
   base_placement_interfaces
+  reachability_map_visualizer
 #   moveit_ros_planning_interface
 #   moveit_core
 #   moveit_ros_planning
@@ -93,8 +95,8 @@ set(HEADER_FILES_MOC
   include/base_placement_plugin/point_tree_model.h
   include/base_placement_plugin/widgets/base_placement_widget.h
   include/base_placement_plugin/place_base.h
-  include/base_placement_plugin/add_way_point.h
-  include/base_placement_plugin/add_robot_base.h
+  include/base_placement_plugin/base_placement_panel.h
+  include/base_placement_plugin/interactive_base_selector.h
 )
 
 ## Generate MOC files
@@ -109,8 +111,8 @@ set(CORE_SOURCE_FILES
 ## Source files for RViz plugin
 set(SOURCE_FILES
   src/place_base.cpp
-  src/add_way_point.cpp
-  src/add_robot_base.cpp
+  src/base_placement_panel.cpp
+  src/interactive_base_selector.cpp
   src/create_marker.cpp
   src/point_tree_item.cpp
   src/point_tree_model.cpp
@@ -188,6 +190,36 @@ install(TARGETS ${PROJECT_NAME}
 
 # Install the server executable to lib/<package_name>/ for ros2 run to find it
 install(TARGETS base_placement_server
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+## Build the test pipeline executable
+add_executable(test_pipeline
+  src/test_pipeline.cpp
+  ${CORE_SOURCE_FILES}
+)
+
+target_include_directories(test_pipeline PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
+ament_target_dependencies(test_pipeline
+  ${dependencies}
+  curobo_msgs
+)
+
+target_link_libraries(test_pipeline
+  ${HDF5_LIBRARIES}
+  ${PCL_LIBRARIES}
+  ${OCTOMAP_LIBRARIES}
+  yaml-cpp
+  ${HighFive_LIBRARIES}
+  data_generation::utils
+)
+
+# Install the test executable
+install(TARGETS test_pipeline
   DESTINATION lib/${PROJECT_NAME}
 )
 

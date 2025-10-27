@@ -11,7 +11,7 @@
 #include <std_msgs/msg/float32.hpp>
 
 #include <base_placement_plugin/create_marker.h>
-#include <base_placement_plugin/add_robot_base.h>
+#include <base_placement_plugin/interactive_base_selector.h>
 
 #include "curobo_msgs/srv/ik.hpp"
 

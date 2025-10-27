@@ -178,6 +178,12 @@ public:
   //! Get best pose from last computation
   geometry_msgs::msg::Pose getBestPose() const;
 
+  //! Get current resolution
+  float getResolution() const;
+
+  //! Get sphere collection (reachability spheres)
+  const std::multimap<std::vector<double>, double>& getSphereCollection() const;
+
   // ============================================================
   // UTILITY METHODS
   // ============================================================

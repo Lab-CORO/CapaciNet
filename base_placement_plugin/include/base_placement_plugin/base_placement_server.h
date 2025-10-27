@@ -14,8 +14,15 @@
 #include <base_placement_interfaces/srv/clear_maps.hpp>
 #include <base_placement_interfaces/srv/get_base_poses.hpp>
 
+#include "reachability_map_visualizer/msg/work_space.hpp"
+#include "reachability_map_visualizer/msg/ws_sphere.hpp"
+#include <visualization_msgs/msg/marker.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
+#include <geometry_msgs/msg/pose.hpp>
+
 #include <memory>
 #include <string>
+#include <vector>
 
 /*!
  *  \brief     ROS2 Action Server for Base Placement
@@ -106,6 +113,12 @@ private:
     std::shared_ptr<base_placement_interfaces::srv::GetBasePoses::Response> response
   );
 
+  //! Publish IRM (Inverse Reachability Map) to visualization topic
+  void publish_irm();
+
+  //! Publish task poses as arrow markers for visualization
+  void publish_find_base(const std::vector<geometry_msgs::msg::Pose>& task_poses);
+
   // ============================================================
   // MEMBER VARIABLES
   // ============================================================
@@ -124,6 +137,12 @@ private:
   rclcpp::Service<base_placement_interfaces::srv::RemoveNamedPose>::SharedPtr srv_remove_named_pose_;
   rclcpp::Service<base_placement_interfaces::srv::ClearMaps>::SharedPtr srv_clear_maps_;
   rclcpp::Service<base_placement_interfaces::srv::GetBasePoses>::SharedPtr srv_get_base_poses_;
+
+  //! Publisher for IRM visualization
+  rclcpp::Publisher<reachability_map_visualizer::msg::WorkSpace>::SharedPtr pub_irm_;
+
+  //! Publisher for task pose markers
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_base_find_;
 };
 
 #endif  // BASE_PLACEMENT_SERVER_H_

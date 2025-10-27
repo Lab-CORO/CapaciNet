@@ -1,5 +1,6 @@
 #include <base_placement_plugin/base_placement_core.h>
 #include <rclcpp/rclcpp.hpp>
+#include <utils.h>
 #include <chrono>
 
 // Static member initialization
@@ -122,14 +123,122 @@ bool BasePlacementCore::loadReachabilityFromFile(
   const std::string& irm_file_path,
   const std::string& rm_file_path)
 {
-  // TODO: Implement HDF5 loading
-  // This should use HighFive library to load the reachability map from file
-  RCLCPP_WARN(node_->get_logger(), "loadReachabilityFromFile not yet implemented");
-  RCLCPP_INFO(node_->get_logger(), "IRM file: %s", irm_file_path.c_str());
+  RCLCPP_INFO(node_->get_logger(), "Loading reachability data from files...");
+  RCLCPP_INFO(node_->get_logger(), "  IRM file: %s", irm_file_path.c_str());
   if (!rm_file_path.empty()) {
-    RCLCPP_INFO(node_->get_logger(), "RM file: %s", rm_file_path.c_str());
+    RCLCPP_INFO(node_->get_logger(), "  RM file: %s", rm_file_path.c_str());
   }
-  return false;
+
+  // Load IRM (Inverse Reachability Map) - contains sphere scores
+  std::map<utils::QuantizedPoint3D, double> reachability_map;
+  double resolution = 0.0;
+  std::array<double, 3> voxel_grid_origin;
+  std::array<int, 3> voxel_grid_sizes;
+
+  bool irm_success = utils::loadFromHDF5(
+      irm_file_path,
+      reachability_map,
+      resolution,
+      voxel_grid_origin,
+      voxel_grid_sizes,
+      0  // group_id
+  );
+
+  if (!irm_success) {
+    RCLCPP_ERROR(node_->get_logger(), "Failed to load IRM file");
+    return false;
+  }
+
+  // Convert reachability map to sphere_col format
+  sphere_col_.clear();
+  for (const auto& entry : reachability_map) {
+    const utils::QuantizedPoint3D& point = entry.first;
+    double score = entry.second;
+
+    std::vector<double> sphere_coord(3);
+    sphere_coord[0] = point.x * resolution;
+    sphere_coord[1] = point.y * resolution;
+    sphere_coord[2] = point.z * resolution;
+
+    sphere_col_.insert({sphere_coord, score});
+  }
+
+  resolution_ = static_cast<float>(resolution);
+
+  RCLCPP_INFO(node_->get_logger(), "Loaded IRM: %zu reachable spheres with resolution %.3f m",
+              sphere_col_.size(), resolution_);
+
+  // Load RM (Master Reachability Map) - contains poses for each sphere
+  if (!rm_file_path.empty()) {
+    // Load poses from NPZ file
+    std::vector<geometry_msgs::msg::Pose> poses;
+    bool rm_success = utils::load_poses_from_file(rm_file_path, poses);
+
+    if (rm_success && !poses.empty()) {
+      RCLCPP_INFO(node_->get_logger(),
+                  "Loaded %zu poses from RM file", poses.size());
+
+      // Convert poses to pose_col_filter_ format
+      sphere_discretization::SphereDiscretization sd;
+      pose_col_filter_.clear();
+
+      for (const auto& pose : poses) {
+        // Use position as key (sphere position)
+        std::vector<double> position(3);
+        position[0] = pose.position.x;
+        position[1] = pose.position.y;
+        position[2] = pose.position.z;
+
+        // Convert full pose to vector (with orientation)
+        std::vector<double> pose_vec;
+        sd.convertPoseToVector(pose, pose_vec);
+
+        pose_col_filter_.insert({position, pose_vec});
+      }
+
+      RCLCPP_INFO(node_->get_logger(),
+                  "Created pose collection with %zu entries", pose_col_filter_.size());
+    } else {
+      RCLCPP_WARN(node_->get_logger(),
+                  "Failed to load RM file or file is empty. Creating sample poses from IRM.");
+
+      // Fallback: create sample poses from high-scoring spheres
+      sphere_discretization::SphereDiscretization sd;
+      pose_col_filter_.clear();
+
+      int poses_created = 0;
+      int max_poses = 1000;  // Limit to avoid too much data
+
+      for (const auto& entry : sphere_col_) {
+        const std::vector<double>& sphere_pos = entry.first;
+        double score = entry.second;
+
+        // Only use high-scoring spheres (score > 0.5) and limit total poses
+        if (score > 0.5 && poses_created < max_poses) {
+          // Create a sample pose at this sphere position
+          geometry_msgs::msg::Pose pose;
+          pose.position.x = sphere_pos[0];
+          pose.position.y = sphere_pos[1];
+          pose.position.z = sphere_pos[2];
+          pose.orientation.w = 1.0;
+          pose.orientation.x = 0.0;
+          pose.orientation.y = 0.0;
+          pose.orientation.z = 0.0;
+
+          std::vector<double> pose_vec;
+          sd.convertPoseToVector(pose, pose_vec);
+          pose_col_filter_.insert({sphere_pos, pose_vec});
+          poses_created++;
+        }
+      }
+
+      RCLCPP_INFO(node_->get_logger(), "Created %d sample poses from high-score spheres",
+                  poses_created);
+    }
+  }
+
+  RCLCPP_INFO(node_->get_logger(), "Reachability data loaded successfully");
+  return true;
 }
 
 // ============================================================
@@ -203,6 +312,59 @@ BasePlacementCore::ComputationResult BasePlacementCore::findBasePlacements(
 
   ComputationResult result;
 
+  // ========== COMPUTE UNION MAP AND HIGH-SCORE SPHERES IF NEEDED ==========
+  // Check if we need to compute union map (not pre-computed by client)
+  if (base_trns_col_.empty() || high_score_sp_.empty())
+  {
+    RCLCPP_INFO(node_->get_logger(),
+                "Computing union map and high-score spheres from loaded reachability data...");
+
+    if (pose_col_filter_.empty() || sphere_col_.empty())
+    {
+      result.success = false;
+      result.message = "No reachability data loaded. Please load IRM/RM files first.";
+      RCLCPP_ERROR(node_->get_logger(), "%s", result.message.c_str());
+      return result;
+    }
+
+    // Create sphere discretization helper
+    sphere_discretization::SphereDiscretization sd;
+
+    // Compute union map: associate task poses with reachability poses
+    base_trns_col_.clear();
+    if (selected_method_ == Method::VerticalRobotModel)
+    {
+      // VerticalRobotModel needs robot base transformation
+      sd.associatePose(base_trns_col_, task_poses, robot_pose_col_filter_, resolution_);
+      createSpheres(base_trns_col_, sphere_color_, high_score_sp_, true);
+    }
+    else
+    {
+      // Other methods use arm base directly
+      sd.associatePose(base_trns_col_, task_poses, pose_col_filter_, resolution_);
+      createSpheres(base_trns_col_, sphere_color_, high_score_sp_, false);
+    }
+
+    RCLCPP_INFO(node_->get_logger(),
+                "Union map computed: %zu poses, %zu spheres, %zu high-score spheres",
+                base_trns_col_.size(), sphere_color_.size(), high_score_sp_.size());
+
+    // Validate we have enough data
+    if (high_score_sp_.empty())
+    {
+      result.success = false;
+      result.message = "No high-score spheres generated from union map computation.";
+      RCLCPP_ERROR(node_->get_logger(), "%s", result.message.c_str());
+      return result;
+    }
+  }
+  else
+  {
+    RCLCPP_INFO(node_->get_logger(),
+                "Using pre-computed union map: %zu poses, %zu high-score spheres",
+                base_trns_col_.size(), high_score_sp_.size());
+  }
+
   // Dispatch to the appropriate algorithm
   switch (selected_method_) {
     case Method::PCA:
@@ -253,8 +415,98 @@ BasePlacementCore::WorkSpace BasePlacementCore::getUnionMap(bool compute_from_cu
   workspace.header.frame_id = "map";
   workspace.resolution = resolution_;
 
-  // TODO: Implement union map computation
-  RCLCPP_WARN(node_->get_logger(), "getUnionMap not yet fully implemented");
+  // If compute_from_current_poses is true, recompute union map from current task poses
+  if (compute_from_current_poses && !named_task_poses_.empty())
+  {
+    RCLCPP_INFO(node_->get_logger(),
+                "Computing union map from %zu current task poses...",
+                named_task_poses_.size());
+
+    // Convert named poses to vector
+    std::vector<geometry_msgs::msg::Pose> task_poses;
+    for (const auto& [name, pose] : named_task_poses_)
+    {
+      task_poses.push_back(pose);
+    }
+
+    // Create sphere discretization helper
+    sphere_discretization::SphereDiscretization sd;
+
+    // Compute union map
+    base_trns_col_.clear();
+    if (selected_method_ == Method::VerticalRobotModel)
+    {
+      sd.associatePose(base_trns_col_, task_poses, robot_pose_col_filter_, resolution_);
+      createSpheres(base_trns_col_, sphere_color_, high_score_sp_, true);
+    }
+    else
+    {
+      sd.associatePose(base_trns_col_, task_poses, pose_col_filter_, resolution_);
+      createSpheres(base_trns_col_, sphere_color_, high_score_sp_, false);
+    }
+
+    RCLCPP_INFO(node_->get_logger(),
+                "Union map computed: %zu poses, %zu spheres, %zu high-score spheres",
+                base_trns_col_.size(), sphere_color_.size(), high_score_sp_.size());
+  }
+
+  // Convert base_trns_col_ and sphere_color_ to WorkSpace format
+  if (!base_trns_col_.empty())
+  {
+    // Group poses by sphere position (key in multimap)
+    std::map<std::vector<double>, std::vector<geometry_msgs::msg::Pose>> grouped_poses;
+
+    for (const auto& [sphere_pos, pose_vec] : base_trns_col_)
+    {
+      geometry_msgs::msg::Pose pose;
+      if (pose_vec.size() >= 7)
+      {
+        pose.position.x = pose_vec[0];
+        pose.position.y = pose_vec[1];
+        pose.position.z = pose_vec[2];
+        pose.orientation.x = pose_vec[3];
+        pose.orientation.y = pose_vec[4];
+        pose.orientation.z = pose_vec[5];
+        pose.orientation.w = pose_vec[6];
+        grouped_poses[sphere_pos].push_back(pose);
+      }
+    }
+
+    // Create WsSphere for each unique sphere position
+    for (const auto& [sphere_pos, poses] : grouped_poses)
+    {
+      WsSphere wss;
+      wss.header.stamp = node_->now();
+      wss.header.frame_id = "map";
+
+      // Set sphere center from position key
+      wss.point.x = sphere_pos[0];
+      wss.point.y = sphere_pos[1];
+      wss.point.z = sphere_pos[2];
+
+      // Get score from sphere_color_ if available
+      auto score_it = sphere_color_.find(sphere_pos);
+      if (score_it != sphere_color_.end())
+      {
+        wss.ri = static_cast<float>(score_it->second / 100.0 * resolution_);
+      }
+      else
+      {
+        wss.ri = resolution_ * 0.5f; // Default radius
+      }
+
+      wss.poses = poses;
+      workspace.ws_spheres.push_back(wss);
+    }
+
+    RCLCPP_INFO(node_->get_logger(),
+                "Workspace created with %zu spheres", workspace.ws_spheres.size());
+  }
+  else
+  {
+    RCLCPP_WARN(node_->get_logger(),
+                "Union map is empty. Load reachability data and add task poses first.");
+  }
 
   return workspace;
 }
@@ -281,6 +533,16 @@ double BasePlacementCore::getBestScore() const
 geometry_msgs::msg::Pose BasePlacementCore::getBestPose() const
 {
   return best_pose_;
+}
+
+float BasePlacementCore::getResolution() const
+{
+  return resolution_;
+}
+
+const std::multimap<std::vector<double>, double>& BasePlacementCore::getSphereCollection() const
+{
+  return sphere_col_;
 }
 
 // ============================================================

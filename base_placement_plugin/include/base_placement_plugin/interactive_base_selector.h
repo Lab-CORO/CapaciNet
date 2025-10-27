@@ -1,5 +1,5 @@
-#ifndef ADD_ROBOT_BASE_H
-#define ADD_ROBOT_BASE_H
+#ifndef INTERACTIVE_BASE_SELECTOR_H
+#define INTERACTIVE_BASE_SELECTOR_H
 
 #ifndef Q_MOC_RUN
 #include <stdio.h>
@@ -51,13 +51,26 @@ class StringProperty;
 class BoolProperty;
 }
 
-class AddRobotBase : public QObject
+/*!
+ *  \brief     Interactive tool for manual base position selection (UserIntuition method)
+ *  \details   The InteractiveBaseSelector provides 3D interactive markers in RViz
+ *             allowing users to manually define robot base positions through direct
+ *             manipulation. This tool is specifically designed for the "UserIntuition"
+ *             base placement method where expert knowledge guides placement rather
+ *             than algorithmic computation.
+ *             Features:
+ *             - 3D interactive markers with 6DOF control
+ *             - Visual feedback with robot model at selected poses
+ *             - Integration with RViz visualization
+ *  \author    Original implementation, adapted to ROS2
+ */
+class InteractiveBaseSelector : public QObject
 {
   Q_OBJECT
 
 public:
-  AddRobotBase(std::shared_ptr<rclcpp::Node> node, QWidget* parent, std::string group_name);
-  virtual ~AddRobotBase();
+  InteractiveBaseSelector(std::shared_ptr<rclcpp::Node> node, QWidget* parent, std::string group_name);
+  virtual ~InteractiveBaseSelector();
   void init();
 
   virtual void processFeedback(
@@ -132,4 +145,4 @@ private:
   std::string group_name_;
 };
 
-#endif // ADD_ROBOT_BASE_H
+#endif // INTERACTIVE_BASE_SELECTOR_H

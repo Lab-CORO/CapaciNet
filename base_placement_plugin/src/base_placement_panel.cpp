@@ -35,12 +35,12 @@ using namespace std::placeholders;  // Pour _1, _2, etc.
 #include <yaml-cpp/yaml.h>
 
 // includes de ton UI et des classes PlaceBase/widgets déjà existantes
-#include "base_placement_plugin/add_way_point.h" // adapte si le header est renommé
+#include "base_placement_plugin/base_placement_panel.h" // adapte si le header est renommé
 
 namespace base_placement_plugin
 {
 
-AddWayPoint::AddWayPoint(QWidget* parent)
+BasePlacementPanel::BasePlacementPanel(QWidget* parent)
 : rviz_common::Panel(parent),
   count_(0),
   node_(nullptr)
@@ -76,12 +76,12 @@ AddWayPoint::AddWayPoint(QWidget* parent)
   RCLCPP_INFO(rclcpp::get_logger("base_placement_plugin"), "Constructor created;");
 }
 
-AddWayPoint::~AddWayPoint()
+BasePlacementPanel::~BasePlacementPanel()
 {
   server_.reset();
 }
 
-void AddWayPoint::onInitialize()
+void BasePlacementPanel::onInitialize()
 {
   // Obtenir le node RViz au lieu de créer un nouveau node
   // Le node RViz est déjà spinné correctement par RViz
@@ -100,7 +100,16 @@ void AddWayPoint::onInitialize()
   // Recréer le serveur avec le node RViz
   server_ = std::make_shared<interactive_markers::InteractiveMarkerServer>("marker_server", node_);
 
-  place_base_ = new PlaceBase(node_);
+  // Initialize action client instead of PlaceBase
+  action_client_cb_group_ = node_->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+  find_base_action_client_ = rclcpp_action::create_client<base_placement_interfaces::action::FindBase>(
+    node_, "find_base", action_client_cb_group_);
+
+  // Initialize service clients for reachability data and other operations
+  update_reachability_client_ = node_->create_client<base_placement_interfaces::srv::UpdateReachabilityMap>(
+    "update_reachability_map", rmw_qos_profile_services_default, action_client_cb_group_);
+  update_parameters_client_ = node_->create_client<base_placement_interfaces::srv::UpdateParameters>(
+    "update_parameters", rmw_qos_profile_services_default, action_client_cb_group_);
 
   widget_ = new widgets::BasePlacementWidget("~");
   // Passer le nœud ROS2 au widget pour qu'il puisse créer AddRobotBase
@@ -111,45 +120,29 @@ void AddWayPoint::onInitialize()
 
   RCLCPP_INFO(rclcpp::get_logger("base_placement_plugin"), "initializing..");
 
-  menu_handler_.insert("Delete", std::bind(&AddWayPoint::processFeedback, this, _1));
+  menu_handler_.insert("Delete", std::bind(&BasePlacementPanel::processFeedback, this, std::placeholders::_1));
   {
-    auto h = menu_handler_.insert("Fine adjustment", std::bind(&AddWayPoint::processFeedback, this, _1));
+    auto h = menu_handler_.insert("Fine adjustment", std::bind(&BasePlacementPanel::processFeedback, this, std::placeholders::_1));
     menu_handler_.setCheckState(h, interactive_markers::MenuHandler::UNCHECKED);
   }
 
-  // connexions Qt: remplacer tf::Transform par tf2::Transform
-  connect(place_base_, SIGNAL(getinitialmarkerFrame_signal(const tf2::Transform)), this,
-          SLOT(getRobotModelFrame_slot(const tf2::Transform)));
+  // Initialize method selection and parameters
+  selected_method_ = 0;
+  num_base_locations_ = 5;
+  num_high_score_spheres_ = 10;
 
-  connect(place_base_, SIGNAL(getinitialmarkerFrame_signal(const tf2::Transform)), widget_,
-          SLOT(setAddPointUIStartPos(const tf2::Transform)));
-  connect(place_base_, SIGNAL(basePlacementProcessStarted()), widget_, SLOT(PlaceBaseStartedHandler()));
-  connect(place_base_, SIGNAL(basePlacementProcessFinished()), widget_, SLOT(PlaceBaseFinishedHandler()));
-  connect(place_base_, SIGNAL(basePlacementProcessCompleted(double)), widget_, SLOT(PlaceBaseCompleted_slot(double)));
-  connect(place_base_, SIGNAL(sendBasePlaceMethods_signal(std::vector< std::string >)), widget_,
-          SLOT(getBasePlacePlanMethod(std::vector< std::string >)));
-  connect(place_base_, SIGNAL(sendOuputType_signal(std::vector< std::string >)), widget_,
-          SLOT(getOutputType(std::vector< std::string >)));
-  connect(place_base_, SIGNAL(sendGroupType_signal(std::vector< std::string >)), widget_,
-          SLOT(getRobotGroups(std::vector< std::string >)));
-  connect(place_base_, SIGNAL(sendSelectedGroup_signal(std::string)), widget_,
-          SLOT(getSelectedGroup(std::string)));
+  // Send initial data to widget
+  // Widget -> this connections
+  connect(widget_, SIGNAL(basePlacementParamsFromUI_signal(int, int)), this, SLOT(setBasePlaceParams(int, int)));
 
-  // Widget -> PlaceBase
-  connect(widget_, SIGNAL(basePlacementParamsFromUI_signal(int, int)), place_base_, SLOT(setBasePlaceParams(int, int)));
-  connect(widget_, SIGNAL(reachabilityData_signal(std::multimap< std::vector< double >, std::vector< double > >,
-                                                  std::multimap< std::vector< double >, double >, float)),
-          place_base_, SLOT(setReachabilityData(std::multimap< std::vector< double >, std::vector< double > >,
-                                               std::multimap< std::vector< double >, double >, float)));
-  connect(widget_, SIGNAL(showUnionMap_signal(bool)), place_base_, SLOT(ShowUnionMap(bool)));
-  connect(widget_, SIGNAL(clearUnionMap_signal(bool)), place_base_, SLOT(clearUnionMap(bool)));
-  connect(widget_, SIGNAL(SendSelectedMethod(int)), place_base_, SLOT(getSelectedMethod(int)));
-  connect(widget_, SIGNAL(SendSelectedOpType(int)), place_base_, SLOT(getSelectedOpType(int)));
-  connect(widget_, SIGNAL(SendSelectedRobotGroup(int)), place_base_, SLOT(getSelectedRobotGroup(int)));
-  connect(widget_, SIGNAL(SendShowUmodel(bool)), place_base_, SLOT(getShowUreachModels(bool)));
-  connect(widget_, SIGNAL(SendBasePoses(std::vector<geometry_msgs::msg::Pose>)), place_base_, SLOT(getBasePoses(std::vector<geometry_msgs::msg::Pose>)));
+  // Signal for file paths (server will load the files)
+  connect(widget_, SIGNAL(reachabilityFilePaths_signal(QString, QString)),
+          this, SLOT(loadReachabilityFromFiles(QString, QString)));
 
-  // Widget -> this
+  connect(widget_, SIGNAL(SendSelectedMethod(int)), this, SLOT(setSelectedMethod(int)));
+  connect(widget_, SIGNAL(SendSelectedOpType(int)), this, SLOT(setSelectedOpType(int)));
+  connect(widget_, SIGNAL(SendBasePoses(std::vector<geometry_msgs::msg::Pose>)), this, SLOT(setUserBasePoses(std::vector<geometry_msgs::msg::Pose>)));
+
   connect(widget_, SIGNAL(addPoint(tf2::Transform)), this, SLOT(addPointFromUI(tf2::Transform)));
   connect(widget_, SIGNAL(pointDelUI_signal(std::string)), this, SLOT(pointDeleted(std::string)));
   connect(widget_, SIGNAL(parseWayPointBtn_signal()), this, SLOT(parseWayPoints()));
@@ -158,19 +151,44 @@ void AddWayPoint::onInitialize()
   connect(widget_, SIGNAL(saveToFileBtn_press()), this, SLOT(saveWayPointsToFile()));
   connect(widget_, SIGNAL(clearAllPoints_signal()), this, SLOT(clearAllPointsRViz()));
 
-  // this -> widget
+  // this -> widget connections
+  connect(this, SIGNAL(getinitialmarkerFrame_signal(const tf2::Transform)), widget_,
+          SLOT(setAddPointUIStartPos(const tf2::Transform)));
+  connect(this, SIGNAL(basePlacementProcessStarted()), widget_, SLOT(PlaceBaseStartedHandler()));
+  connect(this, SIGNAL(basePlacementProcessFinished()), widget_, SLOT(PlaceBaseFinishedHandler()));
+  connect(this, SIGNAL(basePlacementProcessCompleted(double)), widget_, SLOT(PlaceBaseCompleted_slot(double)));
+  connect(this, SIGNAL(sendBasePlaceMethods_signal(std::vector< std::string >)), widget_,
+          SLOT(getBasePlacePlanMethod(std::vector< std::string >)));
+  connect(this, SIGNAL(sendOuputType_signal(std::vector< std::string >)), widget_,
+          SLOT(getOutputType(std::vector< std::string >)));
+
   connect(this, SIGNAL(addPointRViz(const tf2::Transform&, const int)), widget_,
           SLOT(insertRow(const tf2::Transform&, const int)));
   connect(this, SIGNAL(pointPoseUpdatedRViz(const tf2::Transform&, const char*)), widget_,
           SLOT(pointPosUpdated_slot(const tf2::Transform&, const char*)));
   connect(this, SIGNAL(pointDeleteRviz(int)), widget_, SLOT(removeRow(int)));
 
-  // this -> place_base_
-  connect(this, SIGNAL(wayPoints_signal(std::vector< geometry_msgs::msg::Pose >)), place_base_,
-          SLOT(BasePlacementHandler(std::vector< geometry_msgs::msg::Pose >)));
-  connect(this, SIGNAL(initRviz()), place_base_, SLOT(initRvizDone()));
+  // ========== EMIT SIGNALS AFTER CONNECTIONS ARE ESTABLISHED ==========
+  // Send initial transform
+  tf2::Transform identity_transform;
+  identity_transform.setIdentity();
+  Q_EMIT getinitialmarkerFrame_signal(identity_transform);
 
-  Q_EMIT initRviz();
+  // Send method names to widget
+  std::vector<std::string> method_names = {
+    "PrincipalComponentAnalysis",
+    "GraspReachabilityScore",
+    "IKSolutionScore",
+    "VerticalRobotModel",
+    "UserIntuition"
+  };
+  Q_EMIT sendBasePlaceMethods_signal(method_names);
+  RCLCPP_INFO(rclcpp::get_logger("base_placement_plugin"), "Sent %zu method names to widget", method_names.size());
+
+  // Send output type names to widget
+  std::vector<std::string> output_types = {"Arrows", "Manipulator", "RobotModel"};
+  Q_EMIT sendOuputType_signal(output_types);
+  RCLCPP_INFO(rclcpp::get_logger("base_placement_plugin"), "Sent %zu output types to widget", output_types.size());
 
   // Initialiser le frame_id et créer le marqueur interactif initial
   target_frame_ = "base_link";  // Frame par défaut
@@ -181,7 +199,7 @@ void AddWayPoint::onInitialize()
   RCLCPP_INFO(rclcpp::get_logger("base_placement_plugin"), "ready.");
 }
 
-void AddWayPoint::load(const rviz_common::Config& config)
+void BasePlacementPanel::load(const rviz_common::Config& config)
 {
   rviz_common::Panel::load(config);
   QString text_entry;
@@ -193,21 +211,21 @@ void AddWayPoint::load(const rviz_common::Config& config)
   RCLCPP_INFO(rclcpp::get_logger("base_placement_plugin"), "rviz Initialization Finished reading config file");
 }
 
-void AddWayPoint::save(rviz_common::Config config) const
+void BasePlacementPanel::save(rviz_common::Config config) const
 {
   RCLCPP_INFO(rclcpp::get_logger("base_placement_plugin"), "Saving configuration");
   rviz_common::Panel::save(config);
   config.mapSetValue("TextEntry", QString::fromStdString(std::string("test_field")));
 }
 
-void AddWayPoint::addPointFromUI(const tf2::Transform point_pos)
+void BasePlacementPanel::addPointFromUI(const tf2::Transform point_pos)
 {
   RCLCPP_INFO(rclcpp::get_logger("base_placement_plugin"), "Point Added");
   makeArrow(point_pos, count_);
   server_->applyChanges();
 }
 
-void AddWayPoint::processFeedback(const visualization_msgs::msg::InteractiveMarkerFeedback::ConstSharedPtr& feedback)
+void BasePlacementPanel::processFeedback(const visualization_msgs::msg::InteractiveMarkerFeedback::ConstSharedPtr& feedback)
 {
   // event_type constants are the same names in ROS2 messages
   switch (feedback->event_type)
@@ -264,7 +282,7 @@ void AddWayPoint::processFeedback(const visualization_msgs::msg::InteractiveMark
   server_->applyChanges();
 }
 
-void AddWayPoint::pointPoseUpdated(const tf2::Transform& point_pos, const char* marker_name)
+void BasePlacementPanel::pointPoseUpdated(const tf2::Transform& point_pos, const char* marker_name)
 {
   geometry_msgs::msg::Pose pose;
   pose.position.x = point_pos.getOrigin().x();
@@ -296,7 +314,7 @@ void AddWayPoint::pointPoseUpdated(const tf2::Transform& point_pos, const char* 
   server_->applyChanges();
 }
 
-visualization_msgs::msg::Marker AddWayPoint::makeWayPoint(visualization_msgs::msg::InteractiveMarker& /* msg */)
+visualization_msgs::msg::Marker BasePlacementPanel::makeWayPoint(visualization_msgs::msg::InteractiveMarker& /* msg */)
 {
   visualization_msgs::msg::Marker marker;
   marker.type = visualization_msgs::msg::Marker::ARROW;
@@ -307,7 +325,7 @@ visualization_msgs::msg::Marker AddWayPoint::makeWayPoint(visualization_msgs::ms
   return marker;
 }
 
-visualization_msgs::msg::InteractiveMarkerControl& AddWayPoint::makeArrowControlDefault(visualization_msgs::msg::InteractiveMarker& msg)
+visualization_msgs::msg::InteractiveMarkerControl& BasePlacementPanel::makeArrowControlDefault(visualization_msgs::msg::InteractiveMarker& msg)
 {
   visualization_msgs::msg::InteractiveMarkerControl control_menu;
   control_menu.always_visible = true;
@@ -326,7 +344,7 @@ visualization_msgs::msg::InteractiveMarkerControl& AddWayPoint::makeArrowControl
   return msg.controls.back();
 }
 
-visualization_msgs::msg::InteractiveMarkerControl& AddWayPoint::makeArrowControlDetails(visualization_msgs::msg::InteractiveMarker& msg)
+visualization_msgs::msg::InteractiveMarkerControl& BasePlacementPanel::makeArrowControlDetails(visualization_msgs::msg::InteractiveMarker& msg)
 {
   visualization_msgs::msg::InteractiveMarkerControl control_menu;
   control_menu.always_visible = true;
@@ -378,7 +396,7 @@ visualization_msgs::msg::InteractiveMarkerControl& AddWayPoint::makeArrowControl
   return msg.controls.back();
 }
 
-void AddWayPoint::makeArrow(const tf2::Transform& point_pos, int count_arrow)
+void BasePlacementPanel::makeArrow(const tf2::Transform& point_pos, int count_arrow)
 {
   visualization_msgs::msg::InteractiveMarker int_marker;
   RCLCPP_INFO_STREAM(rclcpp::get_logger("base_placement_plugin"), "Markers frame is: " << target_frame_);
@@ -425,11 +443,11 @@ void AddWayPoint::makeArrow(const tf2::Transform& point_pos, int count_arrow)
 
   makeArrowControlDefault(int_marker);
   server_->insert(int_marker);
-  server_->setCallback(int_marker.name, std::bind(&AddWayPoint::processFeedback, this, _1));
+  server_->setCallback(int_marker.name, std::bind(&BasePlacementPanel::processFeedback, this, std::placeholders::_1));
   menu_handler_.apply(*server_, int_marker.name);
 }
 
-void AddWayPoint::changeMarkerControlAndPose(std::string marker_name, bool set_control)
+void BasePlacementPanel::changeMarkerControlAndPose(std::string marker_name, bool set_control)
 {
   visualization_msgs::msg::InteractiveMarker int_marker;
   server_->get(marker_name, int_marker);
@@ -447,10 +465,10 @@ void AddWayPoint::changeMarkerControlAndPose(std::string marker_name, bool set_c
 
   server_->insert(int_marker);
   menu_handler_.apply(*server_, int_marker.name);
-  server_->setCallback(int_marker.name, std::bind(&AddWayPoint::processFeedback, this, _1));
+  server_->setCallback(int_marker.name, std::bind(&BasePlacementPanel::processFeedback, this, std::placeholders::_1));
 }
 
-void AddWayPoint::pointDeleted(std::string marker_name)
+void BasePlacementPanel::pointDeleted(std::string marker_name)
 {
   for (size_t i = 0; i < waypoints_pos_.size(); ++i)
   {
@@ -483,7 +501,7 @@ void AddWayPoint::pointDeleted(std::string marker_name)
   server_->applyChanges();
 }
 
-visualization_msgs::msg::Marker AddWayPoint::makeInterArrow(visualization_msgs::msg::InteractiveMarker& /* msg */)
+visualization_msgs::msg::Marker BasePlacementPanel::makeInterArrow(visualization_msgs::msg::InteractiveMarker& /* msg */)
 {
   visualization_msgs::msg::Marker marker;
   marker.type = visualization_msgs::msg::Marker::ARROW;
@@ -492,7 +510,7 @@ visualization_msgs::msg::Marker AddWayPoint::makeInterArrow(visualization_msgs::
   return marker;
 }
 
-visualization_msgs::msg::InteractiveMarkerControl& AddWayPoint::makeInteractiveMarkerControl(visualization_msgs::msg::InteractiveMarker& msg)
+visualization_msgs::msg::InteractiveMarkerControl& BasePlacementPanel::makeInteractiveMarkerControl(visualization_msgs::msg::InteractiveMarker& msg)
 {
   visualization_msgs::msg::InteractiveMarkerControl control_button;
   control_button.always_visible = true;
@@ -533,7 +551,7 @@ visualization_msgs::msg::InteractiveMarkerControl& AddWayPoint::makeInteractiveM
   return msg.controls.back();
 }
 
-void AddWayPoint::makeInteractiveMarker()
+void BasePlacementPanel::makeInteractiveMarker()
 {
   visualization_msgs::msg::InteractiveMarker inter_arrow_marker_;
   inter_arrow_marker_.header.frame_id = target_frame_;
@@ -551,13 +569,13 @@ void AddWayPoint::makeInteractiveMarker()
 
   makeInteractiveMarkerControl(inter_arrow_marker_);
   server_->insert(inter_arrow_marker_);
-  server_->setCallback(inter_arrow_marker_.name, std::bind(&AddWayPoint::processFeedback, this, _1));
+  server_->setCallback(inter_arrow_marker_.name, std::bind(&BasePlacementPanel::processFeedback, this, std::placeholders::_1));
 }
 
-void AddWayPoint::parseWayPoints()
+void BasePlacementPanel::parseWayPoints()
 {
   geometry_msgs::msg::Pose target_pose;
-  std::vector< geometry_msgs::msg::Pose > waypoints;
+  std::vector<geometry_msgs::msg::Pose> waypoints;
   for (size_t i = 0; i < waypoints_pos_.size(); ++i)
   {
     // Convert tf2::Transform to geometry_msgs::msg::Pose
@@ -570,10 +588,65 @@ void AddWayPoint::parseWayPoints()
     target_pose.orientation.w = waypoints_pos_[i].getRotation().w();
     waypoints.push_back(target_pose);
   }
+
+  if (waypoints.empty())
+  {
+    RCLCPP_ERROR(node_->get_logger(), "No waypoints to process!");
+    return;
+  }
+
+  // Emit signal for backward compatibility
   Q_EMIT wayPoints_signal(waypoints);
+
+  // Wait for action server to be available
+  if (!find_base_action_client_->wait_for_action_server(std::chrono::seconds(5)))
+  {
+    RCLCPP_ERROR(node_->get_logger(), "Action server not available after waiting");
+    return;
+  }
+
+  // Emit signal to indicate processing started
+  Q_EMIT basePlacementProcessStarted();
+
+  // Create and send goal
+  auto goal_msg = FindBaseAction::Goal();
+
+  // Convert Pose vector to PoseNamed vector
+  for (size_t i = 0; i < waypoints.size(); ++i)
+  {
+    base_placement_interfaces::msg::PoseNamed named_pose;
+    named_pose.name = "task_pose_" + std::to_string(i);
+    named_pose.pose = waypoints[i];
+    goal_msg.task_poses.push_back(named_pose);
+  }
+
+  goal_msg.method_index = selected_method_;
+  goal_msg.num_base_locations = num_base_locations_;
+  goal_msg.num_high_score_spheres = num_high_score_spheres_;
+  goal_msg.use_provided_spheres = false;
+  goal_msg.use_provided_union_map = false;
+
+  // Set up send options with callbacks
+  auto send_goal_options = rclcpp_action::Client<FindBaseAction>::SendGoalOptions();
+
+  send_goal_options.goal_response_callback =
+    std::bind(&BasePlacementPanel::goalResponseCallback, this, std::placeholders::_1);
+
+  send_goal_options.feedback_callback =
+    std::bind(&BasePlacementPanel::feedbackCallback, this, std::placeholders::_1, std::placeholders::_2);
+
+  send_goal_options.result_callback =
+    std::bind(&BasePlacementPanel::resultCallback, this, std::placeholders::_1);
+
+  // Send the goal asynchronously
+  RCLCPP_INFO(node_->get_logger(),
+    "Sending goal to base_placement_server: method=%d, locations=%d, spheres=%d",
+    selected_method_, num_base_locations_, num_high_score_spheres_);
+
+  find_base_action_client_->async_send_goal(goal_msg, send_goal_options);
 }
 
-void AddWayPoint::saveWayPointsToFile()
+void BasePlacementPanel::saveWayPointsToFile()
 {
   QString fileName = QFileDialog::getSaveFileName(this, tr("Save Way Points"), ".yaml", tr("Way Points (*.yaml);;All Files (*)"));
   if (fileName.isEmpty()) return;
@@ -620,7 +693,7 @@ void AddWayPoint::saveWayPointsToFile()
   file.close();
 }
 
-void AddWayPoint::clearAllPointsRViz()
+void BasePlacementPanel::clearAllPointsRViz()
 {
   waypoints_pos_.clear();
   server_->clear();
@@ -629,7 +702,7 @@ void AddWayPoint::clearAllPointsRViz()
   server_->applyChanges();
 }
 
-void AddWayPoint::getRobotModelFrame_slot(const tf2::Transform end_effector)
+void BasePlacementPanel::getRobotModelFrame_slot(const tf2::Transform end_effector)
 {
   target_frame_.assign("base_link");
   RCLCPP_INFO_STREAM(rclcpp::get_logger("base_placement_plugin"), "The robot model frame is: " << target_frame_);
@@ -640,7 +713,191 @@ void AddWayPoint::getRobotModelFrame_slot(const tf2::Transform end_effector)
   server_->applyChanges();
 }
 
+// ============================================================
+// NEW SLOTS FOR HANDLING WIDGET INPUTS
+// ============================================================
+
+void BasePlacementPanel::setBasePlaceParams(int num_base_locations, int num_high_score_spheres)
+{
+  num_base_locations_ = num_base_locations;
+  num_high_score_spheres_ = num_high_score_spheres;
+
+  RCLCPP_INFO(node_->get_logger(),
+    "Base placement parameters updated: locations=%d, spheres=%d",
+    num_base_locations, num_high_score_spheres);
+
+  // Optionally update server parameters via service
+  if (update_parameters_client_->wait_for_service(std::chrono::seconds(1)))
+  {
+    auto request = std::make_shared<base_placement_interfaces::srv::UpdateParameters::Request>();
+    request->method_index = selected_method_;
+    request->num_base_locations = num_base_locations;
+    request->num_high_score_spheres = num_high_score_spheres;
+    update_parameters_client_->async_send_request(request);
+  }
+}
+
+void BasePlacementPanel::loadReachabilityFromFiles(QString irm_file_path, QString rm_file_path)
+{
+  RCLCPP_INFO(node_->get_logger(), "Loading reachability data from files via server...");
+  RCLCPP_INFO(node_->get_logger(), "  IRM file: %s", irm_file_path.toStdString().c_str());
+  if (!rm_file_path.isEmpty()) {
+    RCLCPP_INFO(node_->get_logger(), "  RM file: %s", rm_file_path.toStdString().c_str());
+  }
+
+  // Wait for service to be available
+  if (!update_reachability_client_->wait_for_service(std::chrono::seconds(5)))
+  {
+    RCLCPP_ERROR(node_->get_logger(),
+                 "Service 'update_reachability_map' not available after 5 seconds. "
+                 "Is the BasePlacementServer running?");
+    QMessageBox::critical(nullptr, "Service Error",
+                         "Cannot connect to BasePlacementServer.\n"
+                         "Please ensure the server node is running.");
+    return;
+  }
+
+  // Create service request with file paths
+  auto request = std::make_shared<base_placement_interfaces::srv::UpdateReachabilityMap::Request>();
+  request->irm_file_path = irm_file_path.toStdString();
+  request->rm_file_path = rm_file_path.toStdString();
+  request->load_irm = true;
+  request->load_rm = !rm_file_path.isEmpty();
+
+  RCLCPP_INFO(node_->get_logger(), "Sending service request to server...");
+
+  // Use a lambda to handle the response
+  auto response_callback = [this](rclcpp::Client<base_placement_interfaces::srv::UpdateReachabilityMap>::SharedFuture future)
+  {
+    try {
+      auto response = future.get();
+
+      if (response->success)
+      {
+        RCLCPP_INFO(node_->get_logger(),
+                    "Server successfully loaded reachability data: %d spheres, resolution=%.4f m",
+                    response->num_spheres_loaded, response->resolution);
+
+        // Update local cache for backward compatibility
+        resolution_ = response->resolution;
+
+        QMessageBox::information(nullptr, "Success",
+                                QString("Reachability data loaded successfully!\n"
+                                       "Spheres: %1\n"
+                                       "Resolution: %2 m")
+                                .arg(response->num_spheres_loaded)
+                                .arg(response->resolution));
+      }
+      else
+      {
+        RCLCPP_ERROR(node_->get_logger(),
+                     "Server failed to load reachability data: %s",
+                     response->message.c_str());
+
+        QMessageBox::critical(nullptr, "Loading Error",
+                             QString("Failed to load reachability data:\n%1")
+                             .arg(QString::fromStdString(response->message)));
+      }
+    }
+    catch (const std::exception& e)
+    {
+      RCLCPP_ERROR(node_->get_logger(),
+                   "Exception while waiting for service response: %s", e.what());
+
+      QMessageBox::critical(nullptr, "Service Error",
+                           QString("Error communicating with server:\n%1")
+                           .arg(e.what()));
+    }
+  };
+
+  // Send async request with callback
+  update_reachability_client_->async_send_request(request, response_callback);
+}
+
+void BasePlacementPanel::setSelectedMethod(int method_index)
+{
+  selected_method_ = method_index;
+  RCLCPP_INFO(node_->get_logger(), "Selected method: %d", method_index);
+}
+
+void BasePlacementPanel::setSelectedOpType(int output_type_index)
+{
+  selected_output_type_ = output_type_index;
+  RCLCPP_INFO(node_->get_logger(), "Selected output type: %d", output_type_index);
+}
+
+void BasePlacementPanel::setUserBasePoses(const std::vector<geometry_msgs::msg::Pose>& poses)
+{
+  user_base_poses_ = poses;
+  RCLCPP_INFO(node_->get_logger(), "User-defined base poses set: %zu poses", poses.size());
+}
+
+// ============================================================
+// ACTION CLIENT CALLBACKS
+// ============================================================
+
+void BasePlacementPanel::goalResponseCallback(const GoalHandleFindBase::SharedPtr& goal_handle)
+{
+  if (!goal_handle)
+  {
+    RCLCPP_ERROR(node_->get_logger(), "Goal was rejected by server");
+    Q_EMIT basePlacementProcessFinished();
+  }
+  else
+  {
+    RCLCPP_INFO(node_->get_logger(), "Goal accepted by server, waiting for result");
+    goal_handle_ = goal_handle;
+  }
+}
+
+void BasePlacementPanel::feedbackCallback(
+  GoalHandleFindBase::SharedPtr,
+  const std::shared_ptr<const FindBaseAction::Feedback> feedback)
+{
+  RCLCPP_INFO(node_->get_logger(),
+    "Feedback: phase='%s', iteration=%d/%d, progress=%.1f%%, best_score=%.2f",
+    feedback->current_phase.c_str(),
+    feedback->iteration,
+    feedback->total_iterations,
+    feedback->progress_percentage,
+    feedback->current_best_score);
+}
+
+void BasePlacementPanel::resultCallback(const GoalHandleFindBase::WrappedResult& result)
+{
+  switch (result.code)
+  {
+    case rclcpp_action::ResultCode::SUCCEEDED:
+      RCLCPP_INFO(node_->get_logger(), "Goal succeeded!");
+      RCLCPP_INFO(node_->get_logger(),
+        "Received %zu base poses with best score: %.2f, computation time: %.3fs",
+        result.result->base_poses.size(),
+        result.result->best_score,
+        result.result->computation_time_seconds);
+
+      // Emit signals to update GUI
+      Q_EMIT basePlacementProcessCompleted(result.result->best_score);
+      Q_EMIT basePlacementProcessFinished();
+      break;
+
+    case rclcpp_action::ResultCode::ABORTED:
+      RCLCPP_ERROR(node_->get_logger(), "Goal was aborted: %s", result.result->message.c_str());
+      Q_EMIT basePlacementProcessFinished();
+      break;
+
+    case rclcpp_action::ResultCode::CANCELED:
+      RCLCPP_ERROR(node_->get_logger(), "Goal was canceled");
+      Q_EMIT basePlacementProcessFinished();
+      break;
+
+    default:
+      RCLCPP_ERROR(node_->get_logger(), "Unknown result code");
+      Q_EMIT basePlacementProcessFinished();
+      break;
+  }
+}
+
 } // namespace base_placement_plugin
 
 #include <pluginlib/class_list_macros.hpp>
-PLUGINLIB_EXPORT_CLASS(base_placement_plugin::AddWayPoint, rviz_common::Panel)
+PLUGINLIB_EXPORT_CLASS(base_placement_plugin::BasePlacementPanel, rviz_common::Panel)

@@ -34,11 +34,29 @@ public:
   
   visualization_msgs::msg::MarkerArray getDefaultMarkers();
 
-  // TODO: À implémenter par l'utilisateur
-  bool get_fk(const std::vector<double>& joint_positions, 
+  /**
+   * @brief Forward Kinematics computation (to be implemented by user)
+   *
+   * TODO: Implement FK using your robot's kinematic library (e.g., KDL, MoveIt)
+   * This method should compute the poses of all robot links given joint positions.
+   *
+   * @param joint_positions Joint angles/positions for the robot
+   * @param link_poses Output vector of poses for each link
+   * @return true if FK computation succeeded, false otherwise
+   *
+   * Current status: Stub implementation returns mock data
+   */
+  bool get_fk(const std::vector<double>& joint_positions,
               std::vector<geometry_msgs::msg::Pose>& link_poses);
-  
-  bool get_ik(const geometry_msgs::msg::Pose& target_pose, 
+
+  /**
+   * @brief Inverse Kinematics computation
+   *
+   * @param target_pose Desired end-effector pose
+   * @param joint_solution Output joint angles that achieve the target pose
+   * @return true if IK solution found, false otherwise
+   */
+  bool get_ik(const geometry_msgs::msg::Pose& target_pose,
               std::vector<double>& joint_solution);
 
 private:
@@ -73,7 +91,15 @@ private:
                     Eigen::Affine3d tf_first_link_to_root, 
                     visualization_msgs::msg::MarkerArray& markers);
 
-  // Mock pour la génération de marqueurs - À remplacer par chargement URDF
+  /**
+   * @brief Mock marker generation (to be replaced with URDF mesh loading)
+   *
+   * TODO: Replace with actual robot mesh loading from URDF
+   * Currently generates simple geometric shapes (cylinders, spheres) as placeholders
+   *
+   * @param joint_positions Joint positions for visualization
+   * @param markers Output marker array for RViz
+   */
   void generateMockMarkers(const std::vector<double>& joint_positions,
                           visualization_msgs::msg::MarkerArray& markers);
 
@@ -81,8 +107,13 @@ private:
   std::string group_name_;
   std::string parent_link_;
   std::string end_effector_name_;
-  
-  // Configuration du robot - À charger depuis URDF
+
+  /**
+   * Robot configuration - Should be loaded from URDF/robot_description parameter
+   *
+   * TODO: Load from robot_description ROS parameter instead of hardcoded values
+   * Current status: Hardcoded mock values in constructor
+   */
   std::vector<std::string> joint_names_;
   std::vector<std::string> link_names_;
   std::vector<std::string> arm_link_names_;

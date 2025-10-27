@@ -28,6 +28,7 @@
   <depend>data_generation</depend>
   <depend>curobo_msgs</depend>
   <depend>base_placement_interfaces</depend>
+  <depend>reachability_map_visualizer</depend>
   <depend>qtbase5-dev</depend>
 
   <test_depend>ament_lint_auto</test_depend>

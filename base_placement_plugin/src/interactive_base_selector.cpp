@@ -1,19 +1,19 @@
-#include "base_placement_plugin/add_robot_base.h"
+#include "base_placement_plugin/interactive_base_selector.h"
 #include <Eigen/Eigen>
 #include <tf2_eigen/tf2_eigen.hpp>
 
-AddRobotBase::AddRobotBase(std::shared_ptr<rclcpp::Node> node, QWidget* parent, std::string group_name)
+InteractiveBaseSelector::InteractiveBaseSelector(std::shared_ptr<rclcpp::Node> node, QWidget* parent, std::string group_name)
   : widget_(parent), node_(node), count_(0), group_name_(group_name)
 {
   init();
 }
 
-AddRobotBase::~AddRobotBase()
+InteractiveBaseSelector::~InteractiveBaseSelector()
 {
   server_.reset();
 }
 
-void AddRobotBase::init()
+void InteractiveBaseSelector::init()
 {
   // Initialize interactive marker server
   server_ = std::make_shared<interactive_markers::InteractiveMarkerServer>(
@@ -83,7 +83,7 @@ void AddRobotBase::init()
   RCLCPP_INFO(node_->get_logger(), "User base placement interactive marker started.");
 }
 
-void AddRobotBase::processFeedback(
+void InteractiveBaseSelector::processFeedback(
   const visualization_msgs::msg::InteractiveMarkerFeedback::ConstSharedPtr& feedback)
 {
   switch (feedback->event_type)
@@ -141,7 +141,7 @@ void AddRobotBase::processFeedback(
   server_->applyChanges();
 }
 
-void AddRobotBase::getWaypoints(std::vector<geometry_msgs::msg::Pose>& waypoints)
+void InteractiveBaseSelector::getWaypoints(std::vector<geometry_msgs::msg::Pose>& waypoints)
 {
   waypoints.resize(waypoints_pos_.size());
   for (size_t i = 0; i < waypoints_pos_.size(); i++)
@@ -154,7 +154,7 @@ void AddRobotBase::getWaypoints(std::vector<geometry_msgs::msg::Pose>& waypoints
   }
 }
 
-void AddRobotBase::changeMarkerControlAndPose(std::string marker_name, bool set_control)
+void InteractiveBaseSelector::changeMarkerControlAndPose(std::string marker_name, bool set_control)
 {
   visualization_msgs::msg::InteractiveMarker int_marker;
   if (!server_->get(marker_name, int_marker))
@@ -181,7 +181,7 @@ void AddRobotBase::changeMarkerControlAndPose(std::string marker_name, bool set_
 }
 
 visualization_msgs::msg::InteractiveMarkerControl& 
-AddRobotBase::makeArrowControlDefault(visualization_msgs::msg::InteractiveMarker& msg)
+InteractiveBaseSelector::makeArrowControlDefault(visualization_msgs::msg::InteractiveMarker& msg)
 {
   visualization_msgs::msg::InteractiveMarkerControl control_menu;
   control_menu.always_visible = true;
@@ -205,7 +205,7 @@ AddRobotBase::makeArrowControlDefault(visualization_msgs::msg::InteractiveMarker
 }
 
 visualization_msgs::msg::InteractiveMarkerControl& 
-AddRobotBase::makeArrowControlDetails(visualization_msgs::msg::InteractiveMarker& msg)
+InteractiveBaseSelector::makeArrowControlDetails(visualization_msgs::msg::InteractiveMarker& msg)
 {
   visualization_msgs::msg::InteractiveMarkerControl control_menu;
   control_menu.always_visible = true;
@@ -258,7 +258,7 @@ AddRobotBase::makeArrowControlDetails(visualization_msgs::msg::InteractiveMarker
 }
 
 visualization_msgs::msg::Marker 
-AddRobotBase::makeWayPoint(visualization_msgs::msg::InteractiveMarker& /* msg */)
+InteractiveBaseSelector::makeWayPoint(visualization_msgs::msg::InteractiveMarker& /* msg */)
 {
   visualization_msgs::msg::Marker marker;
   marker.type = visualization_msgs::msg::Marker::ARROW;
@@ -268,7 +268,7 @@ AddRobotBase::makeWayPoint(visualization_msgs::msg::InteractiveMarker& /* msg */
   return marker;
 }
 
-void AddRobotBase::pointDeleted(std::string marker_name)
+void InteractiveBaseSelector::pointDeleted(std::string marker_name)
 {
   for (size_t i = 0; i < waypoints_pos_.size(); i++)
   {
@@ -305,7 +305,7 @@ void AddRobotBase::pointDeleted(std::string marker_name)
   server_->applyChanges();
 }
 
-void AddRobotBase::makeArrow(const tf2::Transform& point_pos, int count_arrow)
+void InteractiveBaseSelector::makeArrow(const tf2::Transform& point_pos, int count_arrow)
 {
   visualization_msgs::msg::InteractiveMarker int_marker;
   RCLCPP_INFO(node_->get_logger(), "Markers frame is: %s", target_frame_.c_str());
@@ -363,7 +363,7 @@ void AddRobotBase::makeArrow(const tf2::Transform& point_pos, int count_arrow)
   menu_handler_.apply(*server_, int_marker.name);
 }
 
-void AddRobotBase::makeInteractiveMarker()
+void InteractiveBaseSelector::makeInteractiveMarker()
 {
   visualization_msgs::msg::InteractiveMarker inter_arrow_marker_;
   inter_arrow_marker_.header.frame_id = target_frame_;
@@ -387,7 +387,7 @@ void AddRobotBase::makeInteractiveMarker()
 }
 
 visualization_msgs::msg::InteractiveMarkerControl& 
-AddRobotBase::makeInteractiveMarkerControl(visualization_msgs::msg::InteractiveMarker& msg)
+InteractiveBaseSelector::makeInteractiveMarkerControl(visualization_msgs::msg::InteractiveMarker& msg)
 {
   visualization_msgs::msg::InteractiveMarkerControl control_button;
   control_button.always_visible = true;
@@ -436,7 +436,7 @@ AddRobotBase::makeInteractiveMarkerControl(visualization_msgs::msg::InteractiveM
 }
 
 visualization_msgs::msg::MarkerArray 
-AddRobotBase::makeRobotMarker(visualization_msgs::msg::InteractiveMarker& msg, bool waypoint)
+InteractiveBaseSelector::makeRobotMarker(visualization_msgs::msg::InteractiveMarker& msg, bool waypoint)
 {
   geometry_msgs::msg::TransformStamped pose;
   pose.transform.translation.x = msg.pose.position.x;
@@ -478,7 +478,7 @@ AddRobotBase::makeRobotMarker(visualization_msgs::msg::InteractiveMarker& msg, b
 }
 
 visualization_msgs::msg::Marker 
-AddRobotBase::makeInterArrow(visualization_msgs::msg::InteractiveMarker& /* msg */)
+InteractiveBaseSelector::makeInterArrow(visualization_msgs::msg::InteractiveMarker& /* msg */)
 {
   visualization_msgs::msg::Marker marker;
   marker.type = visualization_msgs::msg::Marker::ARROW;
@@ -487,7 +487,7 @@ AddRobotBase::makeInterArrow(visualization_msgs::msg::InteractiveMarker& /* msg 
   return marker;
 }
 
-void AddRobotBase::parseWayPoints()
+void InteractiveBaseSelector::parseWayPoints()
 {
   geometry_msgs::msg::Pose target_pose;
   std::vector<geometry_msgs::msg::Pose> waypoints;
@@ -506,7 +506,7 @@ void AddRobotBase::parseWayPoints()
   Q_EMIT baseWayPoints_signal(waypoints);
 }
 
-void AddRobotBase::clearAllPointsRviz()
+void InteractiveBaseSelector::clearAllPointsRviz()
 {
   waypoints_pos_.clear();
   server_->clear();
@@ -515,7 +515,7 @@ void AddRobotBase::clearAllPointsRviz()
   server_->applyChanges();
 }
 
-void AddRobotBase::getRobotModelFrame_slot(const tf2::Transform end_effector)
+void InteractiveBaseSelector::getRobotModelFrame_slot(const tf2::Transform end_effector)
 {
   target_frame_ = "base_link";
   RCLCPP_INFO(node_->get_logger(), "The robot model frame is: %s", target_frame_.c_str());
@@ -526,7 +526,7 @@ void AddRobotBase::getRobotModelFrame_slot(const tf2::Transform end_effector)
   server_->applyChanges();
 }
 
-void AddRobotBase::pointPoseUpdated(const tf2::Transform& point_pos, const char* marker_name)
+void InteractiveBaseSelector::pointPoseUpdated(const tf2::Transform& point_pos, const char* marker_name)
 {
   geometry_msgs::msg::Pose pose;
   geometry_msgs::msg::Transform trans =  tf2::toMsg(point_pos);

@@ -1,12 +1,15 @@
 <?xml version="1.0"?>
 <library path="base_placement_plugin">
-  <class name="base_placement_plugin/AddWayPoint" 
-         type="base_placement_plugin::AddWayPoint" 
+  <class name="base_placement_plugin/BasePlacementPanel"
+         type="base_placement_plugin::BasePlacementPanel"
          base_class_type="rviz_common::Panel">
     <description>
       Base Placement Planning Panel for RViz2.
-      This plugin provides interactive marker-based waypoint definition
-      and base placement optimization for robotic manipulators.
+      This plugin provides interactive marker-based waypoint definition,
+      parameter configuration through integrated widget, and action-based
+      communication with the base placement server for robotic manipulator
+      base optimization using multiple algorithms (PCA, reachability scoring,
+      IK solutions, vertical constraint, user intuition).
     </description>
   </class>
 </library>

@@ -59,8 +59,7 @@ void BasePlacementWidget::init()
 
   connect(ui_.btn_LoadPath, &QPushButton::clicked, this, &BasePlacementWidget::loadPointsFromFile);
 
-  connect(ui_.btn_LoadReachabilityFile, &QPushButton::clicked, this, &BasePlacementWidget::loadReachabilityFile);
-  connect(ui_.btn_LoadMasterRM, &QPushButton::clicked, this, &BasePlacementWidget::loadMasterRMFile);
+  connect(ui_.btn_LoadReachabilityFile, &QPushButton::clicked, this, &BasePlacementWidget::loadReachabilityFiles);
   connect(ui_.btn_showUnionMap, &QPushButton::clicked, this, &BasePlacementWidget::showUnionMapFromUI);
   connect(ui_.btn_ClearUnionMap, &QPushButton::clicked, this, &BasePlacementWidget::clearUnionMapFromUI);
 
@@ -129,15 +128,15 @@ void BasePlacementWidget::selectedMethod(int index)
   {
     if(group_name_.size() > 0 && node_)
     {
-      add_robot = new AddRobotBase(node_, nullptr, group_name_);
+      add_robot = new InteractiveBaseSelector(node_, nullptr, group_name_);
       RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"), "User intuition method selected.");
-      connect(this, &BasePlacementWidget::parseWayPointBtn_signal, add_robot, &AddRobotBase::parseWayPoints);
-      connect(add_robot, &AddRobotBase::baseWayPoints_signal, this, &BasePlacementWidget::getWaypoints);
-      connect(this, &BasePlacementWidget::clearAllPoints_signal, add_robot, &AddRobotBase::clearAllPointsRviz);
+      connect(this, &BasePlacementWidget::parseWayPointBtn_signal, add_robot, &InteractiveBaseSelector::parseWayPoints);
+      connect(add_robot, &InteractiveBaseSelector::baseWayPoints_signal, this, &BasePlacementWidget::getWaypoints);
+      connect(this, &BasePlacementWidget::clearAllPoints_signal, add_robot, &InteractiveBaseSelector::clearAllPointsRviz);
     }
     else if(!node_)
     {
-      RCLCPP_ERROR(rclcpp::get_logger("BasePlacementWidget"), "ROS2 node not set! Cannot create AddRobotBase.");
+      RCLCPP_ERROR(rclcpp::get_logger("BasePlacementWidget"), "ROS2 node not set! Cannot create InteractiveBaseSelector.");
     }
   }
   else
@@ -624,150 +623,74 @@ void BasePlacementWidget::PlaceBaseCompleted_slot(double score)
   ui_.lbl_placeBaseCompleted->setText("COMPLETED. Score: " + QString::number(score));
 }
 
-void BasePlacementWidget::loadReachabilityFile()
+void BasePlacementWidget::loadReachabilityFiles()
 {
-  /*! Slot that takes care of opening and loading data from an inverse Reachability Map file
-   *  Uses the HDF5 structure from data_generation package
-  */
-  QString fileName = QFileDialog::getOpenFileName(this, tr("Open Reachability File"), "",
-                                                  tr("Reachability (*.h5);;All Files (*)"));
-
-  if (fileName.isEmpty())
-  {
-    ui_.tabWidget->setEnabled(true);
-    ui_.progressBar->hide();
-    return;
-  }
-
-  ui_.tabWidget->setEnabled(false);
-  ui_.progressBar->show();
-
-  RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"), "Loading reachability file: %s",
-              fileName.toStdString().c_str());
-
-  // Load reachability map from HDF5 using data_generation utils
-  std::map<utils::QuantizedPoint3D, double> reachability_map;
-  double resolution = 0.0;
-  std::array<double, 3> voxel_grid_origin;
-  std::array<int, 3> voxel_grid_sizes;
-
-  // Load from group 0 as requested
-  bool success = utils::loadFromHDF5(fileName.toStdString(),
-                                     reachability_map,
-                                     resolution,
-                                     voxel_grid_origin,
-                                     voxel_grid_sizes,
-                                     0);  // group_id = 0
-
-  if (!success)
-  {
-    QMessageBox::critical(this, tr("Error"),
-                         tr("Failed to load reachability map from HDF5 file"));
-    ui_.tabWidget->setEnabled(true);
-    ui_.progressBar->hide();
-    return;
-  }
-
-  // Convert to legacy format expected by the existing code
-  // pose_col_filter: position -> orientations (empty for reachability map)
-  // sphere_col: position -> reachability score
-  MultiMap pose_col_filter;  // Empty for now
-  std::multimap<std::vector<double>, double> sphere_col;
-
-  // Convert QuantizedPoint3D map to sphere_col format
-  for (const auto& entry : reachability_map)
-  {
-    const utils::QuantizedPoint3D& point = entry.first;
-    double score = entry.second;
-
-    // Convert quantized coordinates back to world coordinates
-    std::vector<double> sphere_coord(3);
-    sphere_coord[0] = point.x * resolution;
-    sphere_coord[1] = point.y * resolution;
-    sphere_coord[2] = point.z * resolution;
-
-    sphere_col.insert(std::pair<std::vector<double>, double>(sphere_coord, score));
-  }
-
-  RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"),
-              "Loaded %lu reachable voxels with resolution %.3f m",
-              reachability_map.size(), resolution);
-
-  // Emit signal with the loaded data
-  Q_EMIT reachabilityData_signal(pose_col_filter, sphere_col, static_cast<float>(resolution));
-
-  ui_.tabWidget->setEnabled(true);
-  ui_.progressBar->hide();
-}
-
-void BasePlacementWidget::loadMasterRMFile()
-{
-  /*! Slot that takes care of opening and loading pose data from a Master RM file (.npz)
-   *  This file contains the pose collection (PoseColFilter) data
+  /*! Simplified slot for selecting IRM and RM files
+   *  Only opens dialogs to select files, then sends paths to panel/server for loading
+   *  The server will handle all file loading logic
    */
-  QString fileName = QFileDialog::getOpenFileName(this, tr("Open Master RM File"), "",
-                                                  tr("Master RM (*.npz);;All Files (*)"));
-
-  if (fileName.isEmpty())
-  {
-    ui_.tabWidget->setEnabled(true);
-    ui_.progressBar->hide();
-    return;
-  }
 
   ui_.tabWidget->setEnabled(false);
   ui_.progressBar->show();
+  ui_.progressBar->setValue(0);
 
-  RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"), "Loading Master RM file: %s",
-              fileName.toStdString().c_str());
+  // ========== STEP 1: Select IRM file (HDF5) ==========
+  QString irmFileName = QFileDialog::getOpenFileName(
+      this,
+      tr("Step 1/2: Select IRM File (Inverse Reachability Map)"),
+      "",
+      tr("IRM Files (*.h5 *.hdf5);;All Files (*)")
+  );
 
-  // Load poses from .npz file using data_generation utils
-  std::vector<geometry_msgs::msg::Pose> poses;
-  bool success = utils::load_poses_from_file(fileName.toStdString(), poses);
-
-  if (!success || poses.empty())
+  if (irmFileName.isEmpty())
   {
-    QMessageBox::critical(this, tr("Error"),
-                         tr("Failed to load poses from Master RM file or file is empty"));
+    RCLCPP_WARN(rclcpp::get_logger("BasePlacementWidget"), "IRM file selection cancelled");
     ui_.tabWidget->setEnabled(true);
     ui_.progressBar->hide();
     return;
   }
 
-  // Convert loaded poses to PoseColFilter format
-  // PoseColFilter is a multimap<vector<double>, vector<double>>
-  // where key is position [x, y, z] and value is orientation [qx, qy, qz, qw]
-  MultiMap pose_col_filter;
+  RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"),
+              "IRM file selected: %s", irmFileName.toStdString().c_str());
 
-  for (const auto& pose : poses)
+  ui_.progressBar->setValue(30);
+
+  // ========== STEP 2: Select RM file (NPZ) - Optional ==========
+  QString rmFileName = QFileDialog::getOpenFileName(
+      this,
+      tr("Step 2/2: Select RM File (Master Reachability Map) - Optional"),
+      "",
+      tr("RM Files (*.npz);;All Files (*)")
+  );
+
+  if (rmFileName.isEmpty())
   {
-    std::vector<double> position(3);
-    position[0] = pose.position.x;
-    position[1] = pose.position.y;
-    position[2] = pose.position.z;
-
-    std::vector<double> orientation(4);
-    orientation[0] = pose.orientation.x;
-    orientation[1] = pose.orientation.y;
-    orientation[2] = pose.orientation.z;
-    orientation[3] = pose.orientation.w;
-
-    pose_col_filter.insert(std::pair<std::vector<double>, std::vector<double>>(position, orientation));
+    RCLCPP_WARN(rclcpp::get_logger("BasePlacementWidget"),
+                "RM file selection cancelled. Server will load IRM data only.");
+  }
+  else
+  {
+    RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"),
+                "RM file selected: %s", rmFileName.toStdString().c_str());
   }
 
-  RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"),
-              "Loaded %lu poses from Master RM file",
-              pose_col_filter.size());
+  ui_.progressBar->setValue(60);
 
-  // Emit signal with the loaded pose data
-  // Note: We're only sending pose_col_filter here; sphere_col should be loaded separately from IRM file
-  std::multimap<std::vector<double>, double> empty_sphere_col;
-  Q_EMIT reachabilityData_signal(pose_col_filter, empty_sphere_col, 0.0f);
+  // ========== STEP 3: Send file paths to panel (which forwards to server) ==========
+  RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"),
+              "Sending file paths to server for loading...");
+
+  // Emit new signal with file paths only
+  Q_EMIT reachabilityFilePaths_signal(irmFileName, rmFileName);
+
+  ui_.progressBar->setValue(100);
+
+  RCLCPP_INFO(rclcpp::get_logger("BasePlacementWidget"),
+              "File paths sent to server. Server will handle loading.");
 
   ui_.tabWidget->setEnabled(true);
   ui_.progressBar->hide();
 }
-
 
 void BasePlacementWidget::clearUnionMapFromUI()
 {

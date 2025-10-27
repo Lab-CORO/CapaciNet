@@ -8,16 +8,17 @@ double unifRand() {
 
 CreateMarker::CreateMarker(std::shared_ptr<rclcpp::Node> node, const std::string& group_name)
   : node_(node), group_name_(group_name) {
-  
-  // TODO: Charger la configuration depuis URDF ou paramètres ROS2
-  // Pour l'instant, configuration mock
+
+  // TODO: Load configuration from URDF or robot_description ROS2 parameter
+  // Current implementation uses hardcoded mock values
+  // To implement: Parse robot_description parameter and extract joint/link names
   joint_names_ = {"joint1", "joint2", "joint3", "joint4", "joint5", "joint6"};
   link_names_ = {"base_link", "link1", "link2", "link3", "link4", "link5", "link6"};
   arm_link_names_ = {"link1", "link2", "link3", "link4", "link5", "link6"};
   ee_link_names_ = {"ee_link"};
   parent_link_ = "base_link";
   end_effector_name_ = "gripper";
-  
+
   RCLCPP_INFO(node_->get_logger(), "CreateMarker initialized for group: %s", group_name_.c_str());
 }
 
@@ -73,9 +74,11 @@ void CreateMarker::getFullLinkNames(std::vector<std::string>& full_link_names, b
 
 void CreateMarker::generateMockMarkers(const std::vector<double>& /* joint_positions */,
                                        visualization_msgs::msg::MarkerArray& markers) {
-  // Mock: Génère des marqueurs simples pour chaque lien
-  // TODO: Remplacer par chargement des mesh depuis URDF
-  
+  // TODO: Replace with actual mesh loading from URDF
+  // Current implementation generates simple geometric shapes (cylinders, spheres)
+  // as placeholders for robot links
+  // To implement: Load mesh files from URDF and use MESH_RESOURCE markers
+
   markers.markers.clear();
   
   for (size_t i = 0; i < link_names_.size(); ++i) {
@@ -168,8 +171,10 @@ void CreateMarker::makeIntMarkerControl(const geometry_msgs::msg::Pose& base_pos
   
   visualization_msgs::msg::MarkerArray full_link_markers;
   generateMockMarkers(joint_soln, full_link_markers);
-  
-  // TODO: Calculer la vraie transformation avec FK
+
+  // TODO: Compute real transformation using Forward Kinematics
+  // Current implementation uses identity transform (no actual FK computation)
+  // To implement: Call get_fk() to compute real link poses from joint_soln
   Eigen::Affine3d tf_root_to_first_link = Eigen::Affine3d::Identity();
   Eigen::Affine3d tf_first_link_to_root = tf_root_to_first_link.inverse();
   
@@ -252,10 +257,11 @@ visualization_msgs::msg::MarkerArray CreateMarker::getDefaultMarkers() {
   return full_link_markers;
 }
 
-// TODO: À implémenter par l'utilisateur
+// TODO: User implementation required - Forward Kinematics stub
 bool CreateMarker::get_fk(const std::vector<double>& /* joint_positions */,
                           std::vector<geometry_msgs::msg::Pose>& link_poses) {
-  // Placeholder - implémenter avec votre bibliothèque IK/FK
+  // Stub implementation - Replace with your robot's FK library (KDL, MoveIt, etc.)
+  // This method should compute link poses from joint angles using robot kinematics
   RCLCPP_WARN(node_->get_logger(), "get_fk() not implemented - using identity transforms");
   
   link_poses.clear();

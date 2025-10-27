@@ -14,8 +14,8 @@
 
 #include <ui_base_placement_widget.h>
 
-#include <base_placement_plugin/add_way_point.h>
-#include <base_placement_plugin/add_robot_base.h>
+#include <base_placement_plugin/base_placement_panel.h>
+#include <base_placement_plugin/interactive_base_selector.h>
 
 #include <QWidget>
 #include <QTimer>
@@ -78,7 +78,7 @@ protected:
   Ui::BasePlacementWidget ui_;
   QStandardItemModel* pointDataModel = nullptr;
 
-  AddRobotBase* add_robot = nullptr;
+  InteractiveBaseSelector* add_robot = nullptr;
 
   bool show_union_map_ = false;
   bool show_umodels_ = false;
@@ -102,8 +102,7 @@ protected Q_SLOTS:
   void parseWayPointBtn_slot();
   void savePointsToFile();
   void loadPointsFromFile();
-  void loadReachabilityFile();
-  void loadMasterRMFile();
+  void loadReachabilityFiles();
   void showUnionMapFromUI();
   void clearUnionMapFromUI();
   void startUserIntution();
@@ -124,9 +123,9 @@ protected Q_SLOTS:
   void showUreachModels();
 
 Q_SIGNALS:
-  void reachabilityData_signal(std::multimap<std::vector<double>, std::vector<double>> PoseColFilter,
-                               std::multimap<std::vector<double>, double> SphereCol,
-                               float res);
+  // Send file paths to panel (which forwards to server)
+  void reachabilityFilePaths_signal(QString irm_file_path, QString rm_file_path);
+
   void showUnionMap_signal(bool show_union_map_);
   void clearUnionMap_signal(bool show_union_map_);
   void addPoint(const tf2::Transform point_pos);
