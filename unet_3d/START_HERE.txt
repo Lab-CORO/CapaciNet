@@ -1,0 +1,25 @@
+╔═══════════════════════════════════════════════════════════════╗
+║                   🚀 COMMENCER ICI 🚀                         ║
+╚═══════════════════════════════════════════════════════════════╝
+
+📖 LISEZ D'ABORD (2 minutes):
+   cat QUICKSTART.md
+
+⚡ ENSUITE LANCEZ (3 commandes):
+   make build
+   make test  
+   make node
+
+📚 POUR EN SAVOIR PLUS:
+   cat FILES_CREATED.txt    → Tous les fichiers créés
+   cat WELCOME.txt          → Guide visuel
+   cat NEXT_STEPS.md        → Prochaines étapes
+   cat SUMMARY.md           → Résumé complet
+
+🆘 BESOIN D'AIDE:
+   make help                → Liste des commandes
+   cat README_DOCKER.md     → Documentation complète
+
+═══════════════════════════════════════════════════════════════
+✨ Tout est prêt ! Commencez par: cat QUICKSTART.md
+═══════════════════════════════════════════════════════════════
