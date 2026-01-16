@@ -51,7 +51,6 @@ add_executable(create_reachability_map
         include/sphere_discretization.h
         src/sphere_discretization.cpp
         include/progressbar.hpp
-        include/json.hpp
         include/utils.h
         src/utils.cpp
 
@@ -72,7 +71,6 @@ add_executable(generate_data
         include/sphere_discretization.h
         src/sphere_discretization.cpp
         include/progressbar.hpp
-        include/json.hpp
         include/utils.h
         src/utils.cpp
 
@@ -90,7 +88,6 @@ target_link_libraries(generate_data
 add_executable(reachability_map_viz
         src/reachability_map_viz.cpp
         include/progressbar.hpp
-        include/json.hpp
         include/utils.h
         src/utils.cpp
 
