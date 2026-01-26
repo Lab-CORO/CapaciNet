@@ -41,6 +41,9 @@ RUN make -j$(nproc) && make install
 WORKDIR /home/ros2_ws
 RUN cd src && git clone https://github.com/Lab-CORO/curobo_ros.git --recurse-submodules \
     && git clone https://github.com/Lab-CORO/CapaciNet.git && git clone -b humble https://github.com/doosan-robotics/doosan-robot2.git
+# Comment out open3d import in obstacle_manager.py (open3d causes issues)
+# Note: This assumes curobo_ros is copied/mounted at /home/ros2_ws/src/curobo_ros
+RUN sed -i '5s/^/# /' /home/ros2_ws/src/curobo_ros/curobo_ros/core/obstacle_manager.py || true
 
 # Setup the workspace for curobo_ros and doosan
 RUN apt install python3-vcstool && cd src && vcs import < curobo_ros/my.repos && \ 
