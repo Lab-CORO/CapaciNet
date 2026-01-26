@@ -1,6 +1,6 @@
 # add arg to specify the platform: rtx 4000 or rtx3000 (a100)
 ARG PLATFORM=A100
-FROM curobo_docker:${PLATFORM}
+FROM curobo_ros:ampere-dev
 ARG GIT_USERNAME
 ARG GIT_EMAIL
 
@@ -43,7 +43,7 @@ RUN cd src && git clone https://github.com/Lab-CORO/curobo_ros.git --recurse-sub
     && git clone https://github.com/Lab-CORO/CapaciNet.git && git clone -b humble https://github.com/doosan-robotics/doosan-robot2.git
 
 # Setup the workspace for curobo_ros and doosan
-RUN apt install python3-vcstool && cd src/curobo_ros && vcs import < my.repos && \ 
+RUN apt install python3-vcstool && cd src && vcs import < curobo_ros/my.repos && \ 
      sh -c 'echo "deb http://packages.osrfoundation.org/gazebo/ubuntu-stable `lsb_release -cs` main" > /etc/apt/sources.list.d/gazebo-stable.list' && \
      wget http://packages.osrfoundation.org/gazebo.key -O - | sudo apt-key add - &&\
      apt-get update && \
@@ -52,7 +52,8 @@ RUN apt install python3-vcstool && cd src/curobo_ros && vcs import < my.repos &&
         ros-humble-control-msgs ros-humble-realtime-tools ros-humble-xacro\
         ros-humble-joint-state-publisher-gui ros-humble-ros2-control\
         ros-humble-ros2-controllers ros-humble-gazebo-msgs ros-humble-moveit-msgs\
-        dbus-x11 ros-humble-moveit-configs-utils ros-humble-moveit-ros-move-group libignition-gazebo6-dev
+        dbus-x11 ros-humble-moveit-configs-utils ros-humble-moveit-ros-move-group libignition-gazebo6-dev \
+        ros-humble-pcl-ros
 
 ENV CMAKE_PREFIX_PATH='/home/HighFive/build/install:${CMAKE_PREFIX_PATH}'
 
