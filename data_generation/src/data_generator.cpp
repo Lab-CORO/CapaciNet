@@ -117,7 +117,7 @@ namespace cb_data_generator
 
             utils::split_data(this->raw_datas, batch_size, batches);
             // print batch size
-            RCLCPP_WARN(this->get_logger(), "Batch size: %i", batches.size());
+            RCLCPP_WARN(this->get_logger(), "Number of Batch: %i", batches.size());
             RCLCPP_WARN(this->get_logger(), "Data size: %i", this->raw_datas.size());
             // iterate all batches
 

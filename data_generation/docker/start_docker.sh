@@ -34,7 +34,8 @@ if ! [[ "$OSTYPE" == "msys" ]]; then
         --network host \
         -e DISPLAY=$DISPLAY \
         -v /tmp/.X11-unix:/tmp/.X11-unix \
-        data_generation_docker:x86
+        -v /home/coro/Documents/CapaciNet/data_generation:/home/ros2_ws/src/CapaciNet/data_generation \
+        data_generation_docker:rtx30xxx
         
 else
     echo "Detected OS is msys, make sure to have an X server running on your host machine"
