@@ -74,7 +74,7 @@ ros2 launch data_generation generate_real_data.launch.py \
     world_file:="$WORLD_FILE" \
     cameras_config_file:="$CAMERAS_CONFIG" \
     batch_size:="$BATCH_SIZE" \
-    voxel_size:=0.3  dataset_size:=5 batch_size:=300 obj_max:=00 init_batch_size:=300 use_rosbag_mode:=true scene_stabilization_max_delay_sec:=5.0
+    voxel_size:=0.3  dataset_size:=5 batch_size:=300 obj_max:=00 init_batch_size:=300 use_rosbag_mode:=true scene_stabilization_max_delay_sec:=0.0
 
 # Script will keep running until user interrupts (Ctrl+C)
 # The trap will handle cleanup

@@ -14,6 +14,8 @@ def generate_launch_description():
     use_rosbag_mode = LaunchConfiguration('use_rosbag_mode')
     rosbag_player_name = LaunchConfiguration('rosbag_player_name')
     scene_stabilization_max_delay_sec = LaunchConfiguration('scene_stabilization_max_delay_sec')
+    world_file = LaunchConfiguration('world_file')
+    cameras_config_file = LaunchConfiguration('cameras_config_file')
 
     voxel_size_arg = DeclareLaunchArgument(
         'voxel_size',
@@ -51,6 +53,14 @@ def generate_launch_description():
         'scene_stabilization_max_delay_sec',
         default_value="0.5",  # Default max 0.5 second random delay
     )
+    world_file_arg = DeclareLaunchArgument(
+        'world_file',
+        default_value="/home/ros2_ws/src/CapaciNet/data_generation/config/leeloo_world.yaml",
+    )
+    cameras_config_file_arg = DeclareLaunchArgument(
+        'cameras_config_file',
+        default_value="/home/ros2_ws/src/CapaciNet/data_generation/config/cameras.yaml",
+    )
     return LaunchDescription([
         init_batch_size_arg,
         voxel_size_arg,
@@ -61,6 +71,8 @@ def generate_launch_description():
         use_rosbag_mode_arg,
         rosbag_player_name_arg,
         scene_stabilization_max_delay_sec_arg,
+        world_file_arg,
+        cameras_config_file_arg,
         # Launch the curobo_ik node
         Node(
             package='curobo_ros',
@@ -69,7 +81,9 @@ def generate_launch_description():
             output='screen',
             parameters=[
                 {"voxel_size": voxel_size,
-                "init_batch_size":init_batch_size}
+                "init_batch_size": init_batch_size,
+                "world_file": world_file,
+                "cameras_config_file": cameras_config_file}
             ]
         ),
         # Launch the obstacle_adder node
