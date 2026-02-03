@@ -1,1 +1,140 @@
-generate_data.launch.py
+from launch import LaunchDescription
+from launch_ros.actions import Node
+from launch.actions import DeclareLaunchArgument, LogInfo, ExecuteProcess
+from launch.substitutions import LaunchConfiguration
+
+
+def generate_launch_description():
+    voxel_size = LaunchConfiguration('voxel_size')
+    init_batch_size = LaunchConfiguration('init_batch_size')
+    dataset_size = LaunchConfiguration('dataset_size')
+    batch_size = LaunchConfiguration('batch_size')
+    reach_max = LaunchConfiguration('reach_max')
+    obj_max = LaunchConfiguration('obj_max')
+    use_rosbag_mode = LaunchConfiguration('use_rosbag_mode')
+    rosbag_player_name = LaunchConfiguration('rosbag_player_name')
+    scene_stabilization_max_delay_sec = LaunchConfiguration('scene_stabilization_max_delay_sec')
+    world_file = LaunchConfiguration('world_file')
+    cameras_config_file = LaunchConfiguration('cameras_config_file')
+
+
+    voxel_size_arg = DeclareLaunchArgument(
+        'voxel_size',
+        default_value="0.02",  # Set the default value
+    )
+    init_batch_size_arg = DeclareLaunchArgument(
+        'init_batch_size',
+        default_value="1000",  # Set the default value
+    )
+    dataset_size_arg = DeclareLaunchArgument(
+        'dataset_size',
+        default_value="5",  # Set the default value
+    )
+    batch_size_arg = DeclareLaunchArgument(
+        'batch_size',
+        default_value="1000",  # Set the default value
+    )
+    reach_max_arg = DeclareLaunchArgument(
+        'reach_max',
+        default_value="1.3",  # Set the default value
+    )
+    obj_max_arg = DeclareLaunchArgument(
+        'obj_max',
+        default_value="20",  # Set the default value
+    )
+    use_rosbag_mode_arg = DeclareLaunchArgument(
+        'use_rosbag_mode',
+        default_value="false",  # Default to generation mode
+    )
+    rosbag_player_name_arg = DeclareLaunchArgument(
+        'rosbag_player_name',
+        default_value="rosbag2_player",  # Default rosbag player name
+    )
+    scene_stabilization_max_delay_sec_arg = DeclareLaunchArgument(
+        'scene_stabilization_max_delay_sec',
+        default_value="0.5",  # Default max 0.5 second random delay
+    )
+    world_file_arg = DeclareLaunchArgument(
+        'world_file',
+        default_value="/home/ros2_ws/src/CapaciNet/data_generation/config/leeloo_world.yaml",
+    )
+    cameras_config_file_arg = DeclareLaunchArgument(
+        'cameras_config_file',
+        default_value="/home/ros2_ws/src/CapaciNet/data_generation/config/cameras.yaml",
+    )
+    bag_file = LaunchConfiguration('bag_file')
+    bag_file_arg = DeclareLaunchArgument(
+        'bag_file',
+        default_value="",  # Set the path to your bag file
+    )
+    return LaunchDescription([
+        init_batch_size_arg,
+        voxel_size_arg,
+        dataset_size_arg,
+        batch_size_arg,
+        reach_max_arg,
+        obj_max_arg,
+        use_rosbag_mode_arg,
+        rosbag_player_name_arg,
+        scene_stabilization_max_delay_sec_arg,
+        world_file_arg,
+        cameras_config_file_arg,
+        bag_file_arg,
+        # Launch the curobo_ik node
+        ExecuteProcess(
+            cmd=['ros2', 'bag', 'play', bag_file, '--loop',
+                 '--topics', '/masked_depth_image/camera_info', '/masked_depth_image/image_raw'],
+            output='screen',
+        ),
+        Node(
+            package='curobo_ros',
+            executable='curobo_ik',
+            name='curobo_ik',
+            output='screen',
+            parameters=[
+                {"voxel_size": voxel_size,
+                "init_batch_size": init_batch_size,
+                "world_file": world_file,
+                "cameras_config_file": cameras_config_file}
+            ]
+        ),
+        # Launch the obstacle_adder node
+        Node(
+            package='data_generation',
+            executable='obstacle_adder',
+            name='obstacle_adder',
+            output='screen',
+        ),
+        # Launch the generate_data node
+        Node(
+            package='data_generation',
+            executable='generate_data',
+            name='generate_data',
+            output='screen',
+            parameters=[
+                {"voxel_size": voxel_size,
+                "dataset_size": dataset_size,
+                "batch_size": batch_size,
+                "reach_max": reach_max,
+                "obj_max": obj_max,
+                }
+            ]
+        ),
+        Node(
+            package='data_generation',
+            executable='scene_manager',
+            name='scene_manager',
+            output='screen',
+            parameters=[
+                {"voxel_size": voxel_size,
+                "dataset_size": dataset_size,
+                "batch_size": batch_size,
+                "reach_max": reach_max,
+                "obj_max": obj_max,
+                "use_rosbag_mode": use_rosbag_mode,
+                "rosbag_player_name": rosbag_player_name,
+                "scene_stabilization_max_delay_sec": scene_stabilization_max_delay_sec,
+                }
+            ]
+        ),
+    ])
