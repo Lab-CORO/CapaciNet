@@ -111,17 +111,17 @@ namespace cb_data_generator
             auto start_time = std::chrono::high_resolution_clock::now();
 
             std::vector<geometry_msgs::msg::Pose> data;
-            
-            // create a copie of this->map_rm to keep a clean object for later 
-            auto local_map_rm = this->map_rm;
 
             // split data into batches
             std::vector<std::vector<geometry_msgs::msg::Pose>> batches;
 
             utils::split_data(this->raw_datas, batch_size, batches);
             // print batch size
-            RCLCPP_WARN(this->get_logger(), "Batch size: %i", batches.size());
+            RCLCPP_WARN(this->get_logger(), "Number of Batch: %i", batches.size());
             RCLCPP_WARN(this->get_logger(), "Data size: %i", this->raw_datas.size());
+
+            // Befor start use a clone of this->map_rm
+            auto local_map_rm = this->map_rm;
             // iterate all batches
 
             for (const auto &batch : batches)
@@ -190,6 +190,7 @@ namespace cb_data_generator
             start_time = std::chrono::high_resolution_clock::now();
 
             utils::saveToHDF5(local_map_rm, voxel_map, resolution, voxel_grid_sizes, voxel_grid_origin, this->data_file_, this->dataset_id);
+
             this->dataset_id += 1;
             // End the timer
             end_time = std::chrono::high_resolution_clock::now();

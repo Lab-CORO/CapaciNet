@@ -18,6 +18,7 @@ find_package (Eigen3 REQUIRED)
 # find_package(rosidl_default_generators REQUIRED)
 find_package(curobo_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
+find_package(rosbag2_interfaces REQUIRED)
 
 find_package(HDF5 REQUIRED COMPONENTS CXX HL)
 find_package(HighFive REQUIRED)
@@ -108,7 +109,7 @@ add_executable(scene_manager
 )
 target_include_directories(scene_manager PUBLIC )
 target_link_libraries(scene_manager)
-ament_target_dependencies(scene_manager rclcpp std_srvs curobo_msgs)
+ament_target_dependencies(scene_manager rclcpp std_srvs curobo_msgs rosbag2_interfaces)
 
 
 
