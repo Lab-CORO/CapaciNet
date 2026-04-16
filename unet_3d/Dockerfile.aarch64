@@ -1,0 +1,106 @@
+FROM curobo-ros-humble:latest
+
+# ── Base: curobo-ros-humble (l4t-jetpack r36.3.0 → CUDA 12.x / Ubuntu 22.04 Jammy)
+# Déjà disponible dans la base :
+#   Python 3.10 (global pip3), PyTorch 2.3.0 (aarch64), torchvision 0.18.0,
+#   numpy<2, open3d, ROS2 Humble + ros-humble-*, nvblox, curobo
+
+LABEL maintainer="Lab-CORO"
+LABEL description="CapacityNet Reachability Node — ROS2 Humble + PyTorch (aarch64, Jetson Orin)"
+LABEL ros.distro="humble"
+LABEL pytorch.version="2.3.0"
+LABEL python.version="3.10"
+
+ARG DEBIAN_FRONTEND=noninteractive
+ENV TZ=America/Montreal
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ÉTAPE 1 — Dépendances Python CapacityNet
+# open3d est déjà dans la base — on installe uniquement ce qui manque.
+# ═══════════════════════════════════════════════════════════════════════════════
+RUN pip3 install --no-cache-dir \
+    h5py \
+    scikit-image \
+    tensorboard \
+    pyyaml \
+    "empy==3.3.4" \
+    lark \
+    catkin_pkg
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ÉTAPE 2 — pytorch-3dunet (installation depuis les sources)
+# Pas de wheel aarch64 précompilé sur PyPI ni conda-forge.
+# Le source dist est pure Python + dépendances standard → compile sur aarch64.
+# Fallback si cette étape échoue :
+#   pip3 install git+https://github.com/wolny/pytorch-3dunet.git
+# ═══════════════════════════════════════════════════════════════════════════════
+RUN pip3 install --no-cache-dir pytorch-3dunet
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ÉTAPE 3 — Re-pin numpy<2
+# pytorch-3dunet ou ses dépendances peuvent remonter numpy 2.x.
+# nvblox_torch est compilé contre l'ABI numpy 1.x — doit rester <2.
+# ═══════════════════════════════════════════════════════════════════════════════
+RUN pip3 install --no-cache-dir "numpy<2"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ÉTAPE 4 — Workspace ROS2 CapacityNet
+# ═══════════════════════════════════════════════════════════════════════════════
+RUN mkdir -p /workspace/capacitynet/ros2_ws/src
+WORKDIR /workspace/capacitynet/ros2_ws/src
+
+RUN git clone https://github.com/Lab-CORO/curobo_msgs.git
+
+# COPY src/ ici si on veut embarquer le code au moment du build :
+# COPY ./ros2_ws/src/capacitynet /workspace/capacitynet/ros2_ws/src/capacitynet
+
+WORKDIR /workspace/capacitynet/ros2_ws
+RUN /bin/bash -c "source /opt/ros/humble/setup.bash && \
+    colcon build --symlink-install"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ÉTAPE 5 — Entrypoint (sans conda — Python 3.10 global hérité de la base)
+# ═══════════════════════════════════════════════════════════════════════════════
+RUN printf '#!/bin/bash\nset -e\nsource /opt/ros/humble/setup.bash\nsource /workspace/capacitynet/ros2_ws/install/setup.bash 2>/dev/null || true\nexport CUDA_LAUNCH_BLOCKING=0\nexport PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512\necho "========================================"\necho "CapacityNet ROS2 Environment (aarch64)"\necho "========================================"\necho "ROS2 Distro: $(printenv ROS_DISTRO)"\necho "Python: $(python3 --version)"\npython3 -c "import torch; print('"'"'PyTorch: '"'"' + torch.__version__)" 2>/dev/null || echo "PyTorch: not loaded"\npython3 -c "import torch; print('"'"'CUDA Available: '"'"' + str(torch.cuda.is_available()))" 2>/dev/null || true\npython3 -c "from pytorch3dunet.unet3d import model; print('"'"'pytorch-3dunet: OK'"'"')" 2>/dev/null || echo "pytorch-3dunet: import error"\necho "========================================"\nexec "$@"\n' > /workspace/entrypoint.sh && chmod +x /workspace/entrypoint.sh
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ÉTAPE 6 — Scripts utilitaires
+# ═══════════════════════════════════════════════════════════════════════════════
+RUN printf '#!/bin/bash\necho "Recompilation du workspace ROS2..."\ncd /workspace/capacitynet/ros2_ws\nsource /opt/ros/humble/setup.bash\ncolcon build --symlink-install\necho "Compilation terminee!"\n' > /workspace/rebuild.sh && chmod +x /workspace/rebuild.sh
+
+RUN printf '#!/bin/bash\necho "Lancement du noeud CapacityNet Reachability..."\npython3 /workspace/capacitynet/ros2_ws/src/capacitynet/capacitynet/capacitynet.py\n' > /workspace/launch_node.sh && chmod +x /workspace/launch_node.sh
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ÉTAPE 7 — .bashrc
+# ═══════════════════════════════════════════════════════════════════════════════
+RUN echo 'source /opt/ros/humble/setup.bash' >> ~/.bashrc && \
+    echo 'source /workspace/capacitynet/ros2_ws/install/setup.bash 2>/dev/null || true' >> ~/.bashrc && \
+    echo 'export CUDA_LAUNCH_BLOCKING=0' >> ~/.bashrc && \
+    echo 'export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512' >> ~/.bashrc && \
+    echo 'alias rebuild="/workspace/rebuild.sh"' >> ~/.bashrc && \
+    echo 'alias launch="/workspace/launch_node.sh"' >> ~/.bashrc
+
+WORKDIR /workspace/capacitynet
+
+ENTRYPOINT ["/workspace/entrypoint.sh"]
+CMD ["/bin/bash"]
+
+# ── Utilisation ───────────────────────────────────────────────────────────────
+# Prérequis : image curobo-ros-humble:latest présente sur le Jetson
+#   docker build -f curobo_ros/docker/aarch64_humble.dockerfile \
+#       -t curobo-ros-humble:latest .
+#
+# Build CapacityNet (depuis CapaciNet/unet_3d/) :
+#   docker build -f Dockerfile.aarch64 -t capacitynet:latest .
+#
+# Run (mode DEV — monter le code source) :
+#   docker run --gpus all -it --rm \
+#       -v $(pwd):/workspace/capacitynet \
+#       --network host \
+#       capacitynet:latest
+#
+# Lancer le nœud directement :
+#   docker run --gpus all --rm \
+#       -v $(pwd):/workspace/capacitynet \
+#       --network host \
+#       capacitynet:latest /workspace/launch_node.sh
