@@ -11,20 +11,15 @@ from rclpy.node import Node
 import numpy as np
 import torch
 import yaml
-from std_msgs.msg import Header
-from sensor_msgs.msg import PointCloud2, PointField
-import sensor_msgs_py.point_cloud2 as pc2
-from geometry_msgs.msg import Point, Point32
+import time
 from curobo_msgs.srv import GetVoxelGrid
 from pytorch3dunet.unet3d.model import get_model
 from pytorch3dunet.unet3d import utils
-import threading
-from queue import Queue
-import open3d as o3d
-from reachability_map_visualizer.msg import WorkSpace, WsSphere
-import h5py
-import os
-from datetime import datetime
+from reachability_map_visualizer.msg import WorkSpace
+from geometry_msgs.msg import Twist, PointStamped
+
+from .obstacle_transformer import ObstacleMapTransformer
+from .gradient_controller import GradientBasedController
 
 
 
@@ -33,8 +28,26 @@ class ReachabilityNode(Node):
     def __init__(self):
         super().__init__('reachability_node')
 
-        # Service client
-        self.voxel_client = self.create_client(GetVoxelGrid, '/curobo_gen_traj/get_voxel_grid')
+        # Declare gradient control parameters
+        self.declare_parameter('enable_gradient_control', True)
+        self.declare_parameter('grid_spacing', 0.10)
+        self.declare_parameter('control_gain', 1.0)
+        self.declare_parameter('max_linear_velocity', 0.10)
+        self.declare_parameter('workspace_radius', 0.30)
+
+        # Declare static obstacles parameters
+        self.declare_parameter('use_static_obstacles', False)
+        self.declare_parameter('static_obstacles_yaml', '/workspace/capacitynet/config/floor_world.yml')
+
+        # Declare workspace center topic
+        self.declare_parameter('workspace_center_topic', '/workspace_center')
+
+        # Declare debug parameters
+        self.declare_parameter('log_control_timing', True)
+        self.declare_parameter('log_quality_scores', False)
+
+        # Service client  /unified_planner/
+        self.voxel_client = self.create_client(GetVoxelGrid, '/unified_planner/get_voxel_grid')
         while not self.voxel_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('Voxel service not available, waiting...')
 
@@ -52,31 +65,69 @@ class ReachabilityNode(Node):
         self.model.to(self.device)
         self.model.eval()
 
-        # CUDA stream for async GPU->CPU transfer
+        # Use FP16 for faster inference and lower VRAM usage
         if self.device == 'cuda':
-            self.cuda_stream = torch.cuda.Stream()
+            self.model = self.model.half()
+            self.use_fp16 = True
+            self.get_logger().info("Using FP16 (half precision) for faster inference")
         else:
-            self.cuda_stream = None
+            self.use_fp16 = False
 
-        # Queue for async CPU processing (voxel->pointcloud conversion)
-        self.conversion_queue = Queue(maxsize=2)  # double buffering
+        # Get gradient control parameters
+        enable_control = self.get_parameter('enable_gradient_control').value
+        grid_spacing = self.get_parameter('grid_spacing').value
+        gain = self.get_parameter('control_gain').value
+        max_vel = self.get_parameter('max_linear_velocity').value
+        workspace_radius = self.get_parameter('workspace_radius').value
 
-        # Start background thread for point cloud conversion
-        self.conversion_thread = threading.Thread(target=self._conversion_worker, daemon=True)
-        self.conversion_thread.start()
+        # Initialize obstacle transformer
+        use_static_obs = self.get_parameter('use_static_obstacles').value
+        static_yaml = self.get_parameter('static_obstacles_yaml').value if use_static_obs else None
 
-        # For publishing
-        self.latest_workspace_msg = None
-        self.lock = threading.Lock()
+        self.obstacle_transformer = ObstacleMapTransformer(
+            resolution=0.02,  # Will be updated dynamically
+            device=self.device,
+            static_obstacles_yaml=static_yaml
+        )
+        self.get_logger().info("ObstacleMapTransformer initialized")
 
-        # HDF5 saving
-        self.hdf5_save_counter = 0
-        self.hdf5_filepath = None
-        self.hdf5_lock = threading.Lock()
+        # Initialize gradient controller
+        self.gradient_controller = GradientBasedController(
+            workspace_radius=workspace_radius,
+            grid_spacing=grid_spacing,
+            gain=gain,
+            max_linear_vel=max_vel,
+            device=self.device
+        )
+        self.get_logger().info("GradientBasedController initialized")
 
-        # Timers - 10Hz for prediction pipeline
-        self.create_timer(0.1, self.call_voxel_service)  # 10Hz
-        self.create_timer(0.1, self.publish_prediction_pc)  # 10Hz
+        # Initialize workspace center (will be updated by subscriber)
+        self.workspace_center = None
+
+        # Subscribe to workspace center topic
+        workspace_topic = self.get_parameter('workspace_center_topic').value
+        self.workspace_center_sub = self.create_subscription(
+            PointStamped,
+            workspace_topic,
+            self.on_workspace_center_received,
+            10
+        )
+        self.get_logger().info(f"Subscribed to workspace center: {workspace_topic}")
+
+        # Publisher for velocity commands
+        if enable_control:
+            self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+            self.get_logger().info("Gradient control enabled, publishing to /cmd_vel")
+        else:
+            self.cmd_vel_pub = None
+            self.get_logger().info("Gradient control disabled")
+
+        # Flags for logging
+        self.log_control_timing = self.get_parameter('log_control_timing').value
+        self.log_quality_scores = self.get_parameter('log_quality_scores').value
+
+        # Timer - 0.1Hz for prediction and publishing pipeline
+        self.create_timer(10.0, self.call_voxel_service)  # 10Hz
 
     def call_voxel_service(self):
         """Call the voxel grid service and store latest voxel grid."""
@@ -84,16 +135,22 @@ class ReachabilityNode(Node):
         future.add_done_callback(self.handle_voxel_response)
 
     def handle_voxel_response(self, future):
+        t_start = time.time()
+
         try:
             response = future.result()
         except Exception as e:
             self.get_logger().error(f"Service call failed: {e}")
             return
 
+        t_after_response = time.time()
+
         vg = response.voxel_grid
         # Convert to NumPy and invert occupancy
         voxel_map = np.frombuffer(bytes(vg.data), dtype=np.uint32)
         voxel_map = 1 - voxel_map.reshape(vg.size_x, vg.size_y, vg.size_z)
+
+        t_after_conversion = time.time()
 
         # Check and adjust resolution if needed
         current_resolution = float(vg.resolutions.x)  # Assuming uniform resolution
@@ -101,7 +158,6 @@ class ReachabilityNode(Node):
 
         if abs(current_resolution - target_resolution) > 1e-6:  # If resolution is different
             scale_factor = current_resolution / target_resolution
-            # self.get_logger().info(f"Adjusting resolution from {current_resolution}m to {target_resolution}m (scale factor: {scale_factor:.3f})")
 
             # Convert to tensor for interpolation
             voxel_tensor = torch.from_numpy(voxel_map.astype(np.float32)).unsqueeze(0).unsqueeze(0)
@@ -120,8 +176,6 @@ class ReachabilityNode(Node):
                 mode='nearest',  # Use nearest neighbor for binary voxel data
                 align_corners=None
             )
-
-            # self.get_logger().info(f"Resized voxel grid from ({vg.size_x}, {vg.size_y}, {vg.size_z}) to {new_size}")
 
             # Create voxel grid info with updated dimensions and resolution
             vg_info = {
@@ -144,192 +198,211 @@ class ReachabilityNode(Node):
                 'size_z': vg.size_z,
             }
 
+        t_after_resize = time.time()
+
         # Move to device
         voxel_map_ts = voxel_map_ts.to(self.device, non_blocking=True)
 
-        # UNet prediction
-        with torch.no_grad():
-            prediction = self.model(voxel_map_ts)
-            prediction = prediction.squeeze()  # remove batch & channel, keep on GPU
+        # Convert to FP16 if using half precision
+        if self.use_fp16:
+            voxel_map_ts = voxel_map_ts.half()
 
-        # Push to conversion queue (non-blocking)
-        try:
-            self.conversion_queue.put_nowait((prediction, voxel_map_ts, vg_info))
-        except:
-            pass  # Queue full, skip this frame to maintain real-time
+        if self.device == 'cuda':
+            torch.cuda.synchronize()  # Wait for transfer to complete
+
+        t_after_gpu_transfer = time.time()
+
+        # Update transformer resolution if changed
+        self.obstacle_transformer.update_resolution(vg_info['resolution'])
+
+        # Check if gradient control is enabled
+        enable_control = self.get_parameter('enable_gradient_control').value
+
+        if enable_control:
+            # Check if workspace center has been received
+            if self.workspace_center is None:
+                self.get_logger().warn("Workspace center not yet received, skipping gradient control")
+                enable_control = False
+
+        if enable_control:
+            # Generate 9 transformed voxel maps for gradient computation
+            transformed_voxels = self.obstacle_transformer.generate_grid_transforms(
+                voxel_map_ts,
+                grid_spacing=self.gradient_controller.delta,
+                origin=vg_info['origin']
+            )  # Shape: (9, 1, size_x, size_y, size_z)
+
+            if self.device == 'cuda':
+                torch.cuda.synchronize()
+            t_after_transforms = time.time()
+
+            # UNet prediction on all 9 voxel maps (batch)
+            with torch.no_grad():
+                predictions = self.model(transformed_voxels)  # (9, 1, size_x, size_y, size_z)
+                t_after_prediction = time.time()
+                predictions = predictions.squeeze(1)  # (9, size_x, size_y, size_z)
+                if self.device == 'cuda':
+                    torch.cuda.synchronize()
+
+            t_after_squeeze = time.time()
+
+            # Compute gradient and control command
+            twist_msg, debug_info = self.gradient_controller.compute_control(
+                predictions,
+                vg_info
+            )
+            t_after_control = time.time()
+
+            # Publish velocity command
+            if self.cmd_vel_pub is not None:
+                self.cmd_vel_pub.publish(twist_msg)
+            t_after_cmd_publish = time.time()
+
+            # Use center RM (index 4) for workspace visualization
+            prediction_center = predictions[4]  # Current position RM
+
+            # Log control info
+            if self.log_quality_scores:
+                scores = debug_info['scores']
+                self.get_logger().info(
+                    f"Scores: [{scores[0]:.3f} {scores[1]:.3f} {scores[2]:.3f}] "
+                    f"[{scores[3]:.3f} {scores[4]:.3f} {scores[5]:.3f}] "
+                    f"[{scores[6]:.3f} {scores[7]:.3f} {scores[8]:.3f}]"
+                )
+
+            grad_x, grad_y = debug_info['gradient']
+            vx, vy = debug_info['velocity']
+            self.get_logger().info(
+                f"∇Q=({grad_x:+.4f},{grad_y:+.4f}) | "
+                f"v=({vx:+.4f},{vy:+.4f}) m/s"
+            )
+
+        else:
+            # Single RM prediction (original behavior)
+            with torch.no_grad():
+                prediction = self.model(voxel_map_ts)  # (1, 1, size_x, size_y, size_z)
+                t_after_prediction = time.time()
+                prediction = prediction.squeeze()  # (size_x, size_y, size_z)
+                if self.device == 'cuda':
+                    torch.cuda.synchronize()
+
+            prediction_center = prediction
+            t_after_transforms = t_after_gpu_transfer  # No transforms
+            t_after_squeeze = t_after_prediction
+            t_after_control = t_after_prediction
+            t_after_cmd_publish = t_after_prediction
+
+        # Convert center RM to CPU for publishing
+        if self.use_fp16:
+            prediction_cpu = prediction_center.float().cpu().numpy()
+        else:
+            prediction_cpu = prediction_center.cpu().numpy()
+
+        t_after_cpu_transfer = time.time()
+
+        # Create and publish WorkSpace message
+        ws_msg = self._create_workspace_message(prediction_cpu, vg_info)
+        t_after_msg_creation = time.time()
+
+        self.ws_pub.publish(ws_msg)
+        t_after_publish = time.time()
+
+        # Free GPU memory
+        if enable_control:
+            del predictions
+            del transformed_voxels
+        else:
+            del prediction
+        del voxel_map_ts
+        if self.device == 'cuda':
+            torch.cuda.empty_cache()
+
+        t_end = time.time()
+
+        # Enhanced timing log
+        if self.log_control_timing or enable_control:
+            timing_msg = (
+                f"Timing [ms]: "
+                f"Response: {(t_after_response - t_start)*1000:.1f} | "
+                f"Conversion: {(t_after_conversion - t_after_response)*1000:.1f} | "
+                f"Resize: {(t_after_resize - t_after_conversion)*1000:.1f} | "
+                f"GPU Xfer: {(t_after_gpu_transfer - t_after_resize)*1000:.1f} | "
+            )
+
+            if enable_control:
+                timing_msg += (
+                    f"Transforms: {(t_after_transforms - t_after_gpu_transfer)*1000:.1f} | "
+                    f"Prediction(9x): {(t_after_prediction - t_after_transforms)*1000:.1f} | "
+                    f"Control: {(t_after_control - t_after_squeeze)*1000:.1f} | "
+                    f"Cmd Pub: {(t_after_cmd_publish - t_after_control)*1000:.1f} | "
+                )
+            else:
+                timing_msg += f"Prediction: {(t_after_prediction - t_after_gpu_transfer)*1000:.1f} | "
+
+            timing_msg += (
+                f"CPU Xfer: {(t_after_cpu_transfer - t_after_cmd_publish)*1000:.1f} | "
+                f"Msg: {(t_after_msg_creation - t_after_cpu_transfer)*1000:.1f} | "
+                f"Publish: {(t_after_publish - t_after_msg_creation)*1000:.1f} | "
+                f"Cleanup: {(t_end - t_after_publish)*1000:.1f} | "
+                f"TOTAL: {(t_end - t_start)*1000:.1f}"
+            )
+
+            self.get_logger().info(timing_msg)
         
-    def _conversion_worker(self):
-        """Background thread: converts GPU prediction -> CPU WorkSpace message."""
-        while True:
-            try:
-                # Blocking get from queue
-                prediction_gpu, voxel_map_ts_gpu, vg_info = self.conversion_queue.get()
-
-                # ASYNC GPU->CPU transfer using pinned memory
-                if self.cuda_stream is not None:
-                    with torch.cuda.stream(self.cuda_stream):
-                        prediction_cpu = prediction_gpu.cpu()
-                        voxel_map_ts_cpu = voxel_map_ts_gpu.cpu()
-                    torch.cuda.current_stream().wait_stream(self.cuda_stream)
-                else:
-                    prediction_cpu = prediction_gpu.cpu()
-                    voxel_map_ts_cpu = voxel_map_ts_gpu.cpu()
-
-                pred_np = prediction_cpu.numpy()
-                voxel_grid_np = 1- voxel_map_ts_cpu.squeeze().numpy()
-
-                # Fast vectorized conversion: voxel grid -> WorkSpace message
-                ws_msg = self._voxel_to_hdf5(pred_np, voxel_grid_np, vg_info, threshold=0.0)
-                # ws_msg = self._voxel_to_workspace_vectorized(pred_np, vg_info, threshold=0.1)
-
-                # if ws_msg is None:
-                #     continue
-
-                # # Thread-safe update
-                # with self.lock:
-                #     self.latest_workspace_msg = ws_msg
-
-            except Exception as e:
-                self.get_logger().error(f"Conversion worker error: {e}")
-
-    def _voxel_to_workspace_vectorized(self, pred, vg_info, threshold=0.2):
-        """Fast vectorized voxel->WorkSpace message conversion using numpy.
+    def _create_workspace_message(self, pred_np, vg_info):
+        """Create WorkSpace message using optimized flat array format.
 
         Args:
-            pred: numpy array with prediction values
+            pred_np: numpy array with prediction values (shape: size_x, size_y, size_z)
             vg_info: dict with voxel grid metadata (origin, resolution, size_x/y/z)
-            threshold: threshold for filtering voxels
+
+        Returns:
+            WorkSpace message with ri_values as flat array
         """
-        # Find all occupied voxel indices
-        occupied = np.argwhere(pred > threshold)
-
-        if len(occupied) == 0:
-            return None
-
-        # Create WorkSpace message
         ws_msg = WorkSpace()
 
         # Fill header
         ws_msg.header.stamp = self.get_clock().now().to_msg()
-        ws_msg.header.frame_id = "base_link"
+        ws_msg.header.frame_id = "base_0"
 
-        # Fill voxel grid info from vg_info dict
+        # Fill voxel grid info
         ws_msg.resolution = float(vg_info['resolution'])
         ws_msg.size_x = int(vg_info['size_x'])
         ws_msg.size_y = int(vg_info['size_y'])
         ws_msg.size_z = int(vg_info['size_z'])
 
-        # Set origin from vg_info
+        # Set origin
         ws_msg.origine.x = float(vg_info['origin'].x)
         ws_msg.origine.y = float(vg_info['origin'].y)
         ws_msg.origine.z = float(vg_info['origin'].z)
 
-        # Vectorized coordinate transformation and create WsSphere messages
-        resolution = vg_info['resolution']
-        origin = vg_info['origin']
-
-        for idx in occupied:
-            wss = WsSphere()
-            wss.header.stamp = ws_msg.header.stamp
-            wss.header.frame_id = ws_msg.header.frame_id
-
-            # Calculate world coordinates using correct resolution
-            wss.point.x = float(origin.x + idx[0] * resolution)
-            wss.point.y = float(origin.y + idx[1] * resolution)
-            wss.point.z = float(origin.z + idx[2] * resolution)
-
-            # Set reachability index (normalized prediction value)
-            wss.ri = float(pred[idx[0], idx[1], idx[2]])*100
-            # self.get_logger().info(f"{wss.ri}")
-
-            ws_msg.ws_spheres.append(wss)
+        # Flatten prediction array and convert to list
+        # Indexed as: ri_values[x * size_y * size_z + y * size_z + z]
+        ws_msg.ri_values = (pred_np * 100.0).flatten().astype(np.float32).tolist()
 
         return ws_msg
 
-
-    def _voxel_to_hdf5(self, pred, voxel_grid, vg_info, threshold=0.0, output_dir="/workspace/capacitynet/reachability_maps"):
-        """Save the prediction to a single HDF5 file with incremental group IDs.
+    def on_workspace_center_received(self, msg: PointStamped):
+        """
+        Callback for workspace center topic (ArTag position).
 
         Args:
-            pred: numpy array with prediction values (after interpolation)
-            voxel_grid: numpy array with voxel grid data (after interpolation)
-            vg_info: dict with voxel grid metadata (origin, resolution, size_x/y/z)
-            threshold: threshold for filtering (not used currently)
-            output_dir: directory where to save the HDF5 file
-
-        Returns:
-            tuple: (filepath, group_id) or (None, None) on failure
+            msg: PointStamped message with x, y, z position
         """
-        with self.hdf5_lock:
-            try:
-                # Create output directory if it doesn't exist
-                os.makedirs(output_dir, exist_ok=True)
+        workspace_center = (
+            msg.point.x,
+            msg.point.y,
+            msg.point.z
+        )
+        self.workspace_center = workspace_center
+        self.gradient_controller.update_workspace_center(workspace_center)
 
-                # Create the HDF5 file on first call
-                if self.hdf5_filepath is None:
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                    filename = f"reachability_{timestamp}.h5"
-                    self.hdf5_filepath = os.path.join(output_dir, filename)
-                    self.get_logger().info(f"Created HDF5 file: {self.hdf5_filepath}")
-
-                # Open file in append mode
-                with h5py.File(self.hdf5_filepath, 'a') as h5file:
-                    # Create group structure with incremental ID
-                    if 'group' not in h5file:
-                        group = h5file.create_group('group')
-                    else:
-                        group = h5file['group']
-
-                    # Create subgroup with current counter
-                    subgroup_name = str(self.hdf5_save_counter)
-                    subgroup = group.create_group(subgroup_name)
-
-                    # Generate timestamp for this save
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-
-                    # Save reachability_map dataset with its attributes
-                    reach_ds = subgroup.create_dataset('reachability_map', data=pred, compression='gzip')
-                    reach_ds.attrs['origine_x'] = float(vg_info['origin'].x)
-                    reach_ds.attrs['origine_y'] = float(vg_info['origin'].y)
-                    reach_ds.attrs['origine_z'] = float(vg_info['origin'].z)
-                    reach_ds.attrs['voxel_grid_size_x'] = int(vg_info['size_x'])
-                    reach_ds.attrs['voxel_grid_size_y'] = int(vg_info['size_y'])
-                    reach_ds.attrs['voxel_grid_size_z'] = int(vg_info['size_z'])
-                    reach_ds.attrs['resolution'] = float(vg_info['resolution'])
-                    reach_ds.attrs['timestamp'] = timestamp
-                    reach_ds.attrs['frame_id'] = 'base_link'
-
-                    # Save voxel_grid dataset with its attributes
-                    voxel_ds = subgroup.create_dataset('voxel_grid', data=voxel_grid, compression='gzip')
-                    voxel_ds.attrs['origine_x'] = float(vg_info['origin'].x)
-                    voxel_ds.attrs['origine_y'] = float(vg_info['origin'].y)
-                    voxel_ds.attrs['origine_z'] = float(vg_info['origin'].z)
-                    voxel_ds.attrs['voxel_grid_size_x'] = int(vg_info['size_x'])
-                    voxel_ds.attrs['voxel_grid_size_y'] = int(vg_info['size_y'])
-                    voxel_ds.attrs['voxel_grid_size_z'] = int(vg_info['size_z'])
-                    voxel_ds.attrs['resolution'] = float(vg_info['resolution'])
-                    voxel_ds.attrs['timestamp'] = timestamp
-                    voxel_ds.attrs['frame_id'] = 'base_link'
-
-                    # Save group-level attribute
-                    subgroup.attrs['group_id'] = self.hdf5_save_counter
-
-                current_id = self.hdf5_save_counter
-                self.hdf5_save_counter += 1
-
-                return self.hdf5_filepath, current_id
-
-            except Exception as e:
-                self.get_logger().error(f"Failed to save HDF5 file: {e}")
-                return None, None
-
-
-    def publish_prediction_pc(self):
-        """Publish latest WorkSpace message from conversion thread."""
-        with self.lock:
-            if self.latest_workspace_msg is not None:
-                self.ws_pub.publish(self.latest_workspace_msg)
-                # self.get_logger().info(f"Published WorkSpace message")  # Reduce logging for 10Hz
+        # Log only on first reception
+        if not hasattr(self, '_last_logged_center'):
+            self.get_logger().info(
+                f"Workspace center received: ({msg.point.x:.3f}, {msg.point.y:.3f}, {msg.point.z:.3f})"
+            )
+            self._last_logged_center = workspace_center
 
 
 def main(args=None):
