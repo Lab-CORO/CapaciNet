@@ -48,7 +48,7 @@ def generate_launch_description():
 
     static_obstacles_yaml_arg = DeclareLaunchArgument(
         'static_obstacles_yaml',
-        default_value='/workspace/capacitynet/config/floor_world.yml',
+        default_value='/home/ros2_ws/src/capacitynet/config/floor_world.yml',
         description='Path to static obstacles YAML file'
     )
 

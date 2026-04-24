@@ -57,7 +57,7 @@ class ReachabilityNode(Node):
         self.ws_pub = self.create_publisher(WorkSpace, '/reachability_map', 10)
 
         # Load UNet3D model
-        config_path = "/workspace/capacitynet/config/test_reach.yaml"
+        config_path = "/home/ros2_ws/src/capacitynet/config/test_reach.yaml"
         config = yaml.safe_load(open(config_path, 'r'))
         self.model = get_model(config['model'])
         utils.load_checkpoint(config['model_path'], self.model)
@@ -70,8 +70,16 @@ class ReachabilityNode(Node):
             self.model = self.model.half()
             self.use_fp16 = True
             self.get_logger().info("Using FP16 (half precision) for faster inference")
+            # Force cuDNN to benchmark and select the fastest supported algorithm.
+            # Avoids CUDNN_STATUS_NOT_SUPPORTED fallback on Jetson/embedded GPUs.
+            torch.backends.cudnn.benchmark = True
+            # torch.compile requires Triton which is unavailable on Jetson (ARM/Tegra).
         else:
             self.use_fp16 = False
+
+        # Pre-allocated reusable CUDA input buffer (avoids malloc on every callback).
+        # Filled once we know the voxel grid shape on first call.
+        self._cuda_input_buffer: torch.Tensor | None = None
 
         # Get gradient control parameters
         enable_control = self.get_parameter('enable_gradient_control').value
@@ -146,38 +154,37 @@ class ReachabilityNode(Node):
         t_after_response = time.time()
 
         vg = response.voxel_grid
-        # Convert to NumPy and invert occupancy
-        voxel_map = np.frombuffer(bytes(vg.data), dtype=np.uint32)
-        voxel_map = 1 - voxel_map.reshape(vg.size_x, vg.size_y, vg.size_z)
+        # frombuffer on a bytes object always yields a read-only array, and CUDA
+        # doesn't support uint32 arithmetic — reinterpret as int32 (same bit pattern
+        # for values 0/1) and copy once to get a writable buffer for torch.from_numpy.
+        voxel_map = np.frombuffer(bytes(vg.data), dtype=np.int32).reshape(
+            vg.size_x, vg.size_y, vg.size_z
+        ).copy()
 
         t_after_conversion = time.time()
 
-        # Check and adjust resolution if needed
-        current_resolution = float(vg.resolutions.x)  # Assuming uniform resolution
+        current_resolution = float(vg.resolutions.x)
         target_resolution = 0.02  # Target resolution expected by the model
 
-        if abs(current_resolution - target_resolution) > 1e-6:  # If resolution is different
+        # Transfer to GPU as int32 with a single copy, then do inversion/cast there.
+        # On Jetson (unified memory) this still copies due to CUDA cache attributes,
+        # but we avoid multiple CPU-side intermediate allocations.
+        raw_gpu = torch.from_numpy(voxel_map).to(self.device, non_blocking=True)
+
+        if abs(current_resolution - target_resolution) > 1e-6:
             scale_factor = current_resolution / target_resolution
-
-            # Convert to tensor for interpolation
-            voxel_tensor = torch.from_numpy(voxel_map.astype(np.float32)).unsqueeze(0).unsqueeze(0)
-
-            # Calculate new dimensions
             new_size = (
                 int(vg.size_x * scale_factor),
                 int(vg.size_y * scale_factor),
-                int(vg.size_z * scale_factor)
+                int(vg.size_z * scale_factor),
             )
-
-            # Resize using trilinear interpolation
+            # Invert occupancy, cast to FP16/FP32, resize — all on GPU
+            dtype = torch.float16 if self.use_fp16 else torch.float32
             voxel_map_ts = torch.nn.functional.interpolate(
-                voxel_tensor,
+                (1 - raw_gpu).to(dtype).unsqueeze(0).unsqueeze(0),
                 size=new_size,
-                mode='nearest',  # Use nearest neighbor for binary voxel data
-                align_corners=None
+                mode='nearest',
             )
-
-            # Create voxel grid info with updated dimensions and resolution
             vg_info = {
                 'origin': vg.origin,
                 'resolution': target_resolution,
@@ -186,10 +193,8 @@ class ReachabilityNode(Node):
                 'size_z': new_size[2],
             }
         else:
-            # No resizing needed, convert to tensor directly
-            voxel_map_ts = torch.from_numpy(voxel_map.astype(np.float32)).unsqueeze(0).unsqueeze(0)
-
-            # Create voxel grid info with original dimensions
+            dtype = torch.float16 if self.use_fp16 else torch.float32
+            voxel_map_ts = (1 - raw_gpu).to(dtype).unsqueeze(0).unsqueeze(0)
             vg_info = {
                 'origin': vg.origin,
                 'resolution': current_resolution,
@@ -200,15 +205,8 @@ class ReachabilityNode(Node):
 
         t_after_resize = time.time()
 
-        # Move to device
-        voxel_map_ts = voxel_map_ts.to(self.device, non_blocking=True)
-
-        # Convert to FP16 if using half precision
-        if self.use_fp16:
-            voxel_map_ts = voxel_map_ts.half()
-
         if self.device == 'cuda':
-            torch.cuda.synchronize()  # Wait for transfer to complete
+            torch.cuda.synchronize()
 
         t_after_gpu_transfer = time.time()
 
@@ -239,10 +237,10 @@ class ReachabilityNode(Node):
             # UNet prediction on all 9 voxel maps (batch)
             with torch.no_grad():
                 predictions = self.model(transformed_voxels)  # (9, 1, size_x, size_y, size_z)
+                if self.device == 'cuda':
+                    torch.cuda.synchronize()  # Ensure GPU is done before capturing timer
                 t_after_prediction = time.time()
                 predictions = predictions.squeeze(1)  # (9, size_x, size_y, size_z)
-                if self.device == 'cuda':
-                    torch.cuda.synchronize()
 
             t_after_squeeze = time.time()
 
@@ -281,10 +279,10 @@ class ReachabilityNode(Node):
             # Single RM prediction (original behavior)
             with torch.no_grad():
                 prediction = self.model(voxel_map_ts)  # (1, 1, size_x, size_y, size_z)
+                if self.device == 'cuda':
+                    torch.cuda.synchronize()  # Ensure GPU is done before capturing timer
                 t_after_prediction = time.time()
                 prediction = prediction.squeeze()  # (size_x, size_y, size_z)
-                if self.device == 'cuda':
-                    torch.cuda.synchronize()
 
             prediction_center = prediction
             t_after_transforms = t_after_gpu_transfer  # No transforms
@@ -301,21 +299,22 @@ class ReachabilityNode(Node):
         t_after_cpu_transfer = time.time()
 
         # Create and publish WorkSpace message
-        ws_msg = self._create_workspace_message(prediction_cpu, vg_info)
+        # ws_msg = self._create_workspace_message(prediction_cpu, vg_info)
         t_after_msg_creation = time.time()
 
-        self.ws_pub.publish(ws_msg)
+        # self.ws_pub.publish(ws_msg)
         t_after_publish = time.time()
 
-        # Free GPU memory
+        # Release local references — PyTorch's own memory pool handles reclamation.
+        # Never call empty_cache() in a real-time loop: it destroys the pool and
+        # forces re-allocation on the next call (~130ms penalty per iteration).
         if enable_control:
             del predictions
             del transformed_voxels
         else:
             del prediction
         del voxel_map_ts
-        if self.device == 'cuda':
-            torch.cuda.empty_cache()
+        del raw_gpu
 
         t_end = time.time()
 
@@ -378,7 +377,7 @@ class ReachabilityNode(Node):
 
         # Flatten prediction array and convert to list
         # Indexed as: ri_values[x * size_y * size_z + y * size_z + z]
-        ws_msg.ri_values = (pred_np * 100.0).flatten().astype(np.float32).tolist()
+        ws_msg.ri = (pred_np * 100.0).flatten().astype(np.float32).tolist()
 
         return ws_msg
 

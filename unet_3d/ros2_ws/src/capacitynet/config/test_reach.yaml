@@ -1,6 +1,6 @@
 # path to the checkpoint file containing the model
 # devices: "cpu"
-model_path: "/home/ros2_ws/src/capacitynet/config/last_checkpoint.pytorch"
+model_path: "/home/ros2_ws/src/capacitynet/config/best_checkpoint.pytorch"
 # model configuration
 model:
   # model class, e.g. UNet3D, ResidualUNet3D
