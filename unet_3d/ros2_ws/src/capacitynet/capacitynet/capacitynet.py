@@ -6,6 +6,7 @@
 # # export PYTHONPATH=/opt/conda/lib/python3.10/site-packages:$PYTHONPATH
 # # Verify with this: echo $PYTHONPATH
 
+import os
 import rclpy
 from rclpy.node import Node
 import numpy as np
@@ -77,9 +78,21 @@ class ReachabilityNode(Node):
         else:
             self.use_fp16 = False
 
-        # Pre-allocated reusable CUDA input buffer (avoids malloc on every callback).
-        # Filled once we know the voxel grid shape on first call.
-        self._cuda_input_buffer: torch.Tensor | None = None
+        # TensorRT engine — optional, graceful fallback to PyTorch if absent or broken.
+        self.trt_model = None
+        trt_engine_path = config.get('trt_engine_path', None)
+        if trt_engine_path and os.path.isfile(trt_engine_path):
+            try:
+                from .trt_model import TRTModel
+                self.trt_model = TRTModel(trt_engine_path)
+                self.trt_model.warmup(spatial=152)
+                torch.cuda.synchronize()
+                self.get_logger().info(f"TRT engine loaded and warmed up: {trt_engine_path}")
+            except Exception as e:
+                self.get_logger().warn(f"TRT engine load failed ({e}), falling back to PyTorch")
+                self.trt_model = None
+        else:
+            self.get_logger().info("No TRT engine configured, using PyTorch inference")
 
         # Get gradient control parameters
         enable_control = self.get_parameter('enable_gradient_control').value
@@ -136,6 +149,11 @@ class ReachabilityNode(Node):
 
         # Timer - 0.1Hz for prediction and publishing pipeline
         self.create_timer(10.0, self.call_voxel_service)  # 10Hz
+
+    def _run_inference(self, x: torch.Tensor) -> torch.Tensor:
+        if self.trt_model is not None:
+            return self.trt_model.infer(x)
+        return self.model(x)
 
     def call_voxel_service(self):
         """Call the voxel grid service and store latest voxel grid."""
@@ -236,7 +254,7 @@ class ReachabilityNode(Node):
 
             # UNet prediction on all 9 voxel maps (batch)
             with torch.no_grad():
-                predictions = self.model(transformed_voxels)  # (9, 1, size_x, size_y, size_z)
+                predictions = self._run_inference(transformed_voxels)  # (9, 1, size_x, size_y, size_z)
                 if self.device == 'cuda':
                     torch.cuda.synchronize()  # Ensure GPU is done before capturing timer
                 t_after_prediction = time.time()
@@ -278,7 +296,7 @@ class ReachabilityNode(Node):
         else:
             # Single RM prediction (original behavior)
             with torch.no_grad():
-                prediction = self.model(voxel_map_ts)  # (1, 1, size_x, size_y, size_z)
+                prediction = self._run_inference(voxel_map_ts)  # (1, 1, size_x, size_y, size_z)
                 if self.device == 'cuda':
                     torch.cuda.synchronize()  # Ensure GPU is done before capturing timer
                 t_after_prediction = time.time()
