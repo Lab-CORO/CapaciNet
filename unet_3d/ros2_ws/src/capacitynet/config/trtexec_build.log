@@ -1,0 +1,164 @@
+&&&& RUNNING TensorRT.trtexec [TensorRT v8602] # /usr/src/tensorrt/bin/trtexec --onnx=/home/ros2_ws/src/capacitynet/config/unet3d.onnx --saveEngine=/home/ros2_ws/src/capacitynet/config/unet3d.trt --fp16 --minShapes=input:1x1x152x152x152 --optShapes=input:6x1x152x152x152 --maxShapes=input:6x1x152x152x152 --memPoolSize=workspace:4096 --noTF32 --minTiming=1 --avgTiming=1
+[04/24/2026-15:18:31] [I] === Model Options ===
+[04/24/2026-15:18:31] [I] Format: ONNX
+[04/24/2026-15:18:31] [I] Model: /home/ros2_ws/src/capacitynet/config/unet3d.onnx
+[04/24/2026-15:18:31] [I] Output:
+[04/24/2026-15:18:31] [I] === Build Options ===
+[04/24/2026-15:18:31] [I] Max batch: explicit batch
+[04/24/2026-15:18:31] [I] Memory Pools: workspace: 4096 MiB, dlaSRAM: default, dlaLocalDRAM: default, dlaGlobalDRAM: default
+[04/24/2026-15:18:31] [I] minTiming: 1
+[04/24/2026-15:18:31] [I] avgTiming: 1
+[04/24/2026-15:18:31] [I] Precision: FP32+FP16
+[04/24/2026-15:18:31] [I] LayerPrecisions: 
+[04/24/2026-15:18:31] [I] Layer Device Types: 
+[04/24/2026-15:18:31] [I] Calibration: 
+[04/24/2026-15:18:31] [I] Refit: Disabled
+[04/24/2026-15:18:31] [I] Version Compatible: Disabled
+[04/24/2026-15:18:31] [I] ONNX Native InstanceNorm: Disabled
+[04/24/2026-15:18:31] [I] TensorRT runtime: full
+[04/24/2026-15:18:31] [I] Lean DLL Path: 
+[04/24/2026-15:18:31] [I] Tempfile Controls: { in_memory: allow, temporary: allow }
+[04/24/2026-15:18:31] [I] Exclude Lean Runtime: Disabled
+[04/24/2026-15:18:31] [I] Sparsity: Disabled
+[04/24/2026-15:18:31] [I] Safe mode: Disabled
+[04/24/2026-15:18:31] [I] Build DLA standalone loadable: Disabled
+[04/24/2026-15:18:31] [I] Allow GPU fallback for DLA: Disabled
+[04/24/2026-15:18:31] [I] DirectIO mode: Disabled
+[04/24/2026-15:18:31] [I] Restricted mode: Disabled
+[04/24/2026-15:18:31] [I] Skip inference: Disabled
+[04/24/2026-15:18:31] [I] Save engine: /home/ros2_ws/src/capacitynet/config/unet3d.trt
+[04/24/2026-15:18:31] [I] Load engine: 
+[04/24/2026-15:18:31] [I] Profiling verbosity: 0
+[04/24/2026-15:18:31] [I] Tactic sources: Using default tactic sources
+[04/24/2026-15:18:31] [I] timingCacheMode: local
+[04/24/2026-15:18:31] [I] timingCacheFile: 
+[04/24/2026-15:18:31] [I] Heuristic: Disabled
+[04/24/2026-15:18:31] [I] Preview Features: Use default preview flags.
+[04/24/2026-15:18:31] [I] MaxAuxStreams: -1
+[04/24/2026-15:18:31] [I] BuilderOptimizationLevel: -1
+[04/24/2026-15:18:31] [I] Input(s)s format: fp32:CHW
+[04/24/2026-15:18:31] [I] Output(s)s format: fp32:CHW
+[04/24/2026-15:18:31] [I] Input build shape: input=1x1x152x152x152+6x1x152x152x152+6x1x152x152x152
+[04/24/2026-15:18:31] [I] Input calibration shapes: model
+[04/24/2026-15:18:31] [I] === System Options ===
+[04/24/2026-15:18:31] [I] Device: 0
+[04/24/2026-15:18:31] [I] DLACore: 
+[04/24/2026-15:18:31] [I] Plugins:
+[04/24/2026-15:18:31] [I] setPluginsToSerialize:
+[04/24/2026-15:18:31] [I] dynamicPlugins:
+[04/24/2026-15:18:31] [I] ignoreParsedPluginLibs: 0
+[04/24/2026-15:18:31] [I] 
+[04/24/2026-15:18:31] [I] === Inference Options ===
+[04/24/2026-15:18:31] [I] Batch: Explicit
+[04/24/2026-15:18:31] [I] Input inference shape: input=6x1x152x152x152
+[04/24/2026-15:18:31] [I] Iterations: 10
+[04/24/2026-15:18:31] [I] Duration: 3s (+ 200ms warm up)
+[04/24/2026-15:18:31] [I] Sleep time: 0ms
+[04/24/2026-15:18:31] [I] Idle time: 0ms
+[04/24/2026-15:18:31] [I] Inference Streams: 1
+[04/24/2026-15:18:31] [I] ExposeDMA: Disabled
+[04/24/2026-15:18:31] [I] Data transfers: Enabled
+[04/24/2026-15:18:31] [I] Spin-wait: Disabled
+[04/24/2026-15:18:31] [I] Multithreading: Disabled
+[04/24/2026-15:18:31] [I] CUDA Graph: Disabled
+[04/24/2026-15:18:31] [I] Separate profiling: Disabled
+[04/24/2026-15:18:31] [I] Time Deserialize: Disabled
+[04/24/2026-15:18:31] [I] Time Refit: Disabled
+[04/24/2026-15:18:31] [I] NVTX verbosity: 0
+[04/24/2026-15:18:31] [I] Persistent Cache Ratio: 0
+[04/24/2026-15:18:31] [I] Inputs:
+[04/24/2026-15:18:31] [I] === Reporting Options ===
+[04/24/2026-15:18:31] [I] Verbose: Disabled
+[04/24/2026-15:18:31] [I] Averages: 10 inferences
+[04/24/2026-15:18:31] [I] Percentiles: 90,95,99
+[04/24/2026-15:18:31] [I] Dump refittable layers:Disabled
+[04/24/2026-15:18:31] [I] Dump output: Disabled
+[04/24/2026-15:18:31] [I] Profile: Disabled
+[04/24/2026-15:18:31] [I] Export timing to JSON file: 
+[04/24/2026-15:18:31] [I] Export output to JSON file: 
+[04/24/2026-15:18:31] [I] Export profile to JSON file: 
+[04/24/2026-15:18:31] [I] 
+[04/24/2026-15:18:31] [I] === Device Information ===
+[04/24/2026-15:18:31] [I] Selected Device: Orin
+[04/24/2026-15:18:31] [I] Compute Capability: 8.7
+[04/24/2026-15:18:31] [I] SMs: 8
+[04/24/2026-15:18:31] [I] Device Global Memory: 62827 MiB
+[04/24/2026-15:18:31] [I] Shared Memory per SM: 164 KiB
+[04/24/2026-15:18:31] [I] Memory Bus Width: 256 bits (ECC disabled)
+[04/24/2026-15:18:31] [I] Application Compute Clock Rate: 1.3 GHz
+[04/24/2026-15:18:31] [I] Application Memory Clock Rate: 0.612 GHz
+[04/24/2026-15:18:31] [I] 
+[04/24/2026-15:18:31] [I] Note: The application clock rates do not reflect the actual clock rates that the GPU is currently running at.
+[04/24/2026-15:18:31] [I] 
+[04/24/2026-15:18:31] [I] TensorRT version: 8.6.2
+[04/24/2026-15:18:31] [I] Loading standard plugins
+[04/24/2026-15:18:31] [I] [TRT] [MemUsageChange] Init CUDA: CPU +2, GPU +0, now: CPU 33, GPU 10185 (MiB)
+[04/24/2026-15:18:37] [I] [TRT] [MemUsageChange] Init builder kernel library: CPU +1166, GPU +1122, now: CPU 1235, GPU 11348 (MiB)
+[04/24/2026-15:18:37] [I] Start parsing network model.
+[04/24/2026-15:18:37] [I] [TRT] ----------------------------------------------------------------
+[04/24/2026-15:18:37] [I] [TRT] Input filename:   /home/ros2_ws/src/capacitynet/config/unet3d.onnx
+[04/24/2026-15:18:37] [I] [TRT] ONNX IR version:  0.0.8
+[04/24/2026-15:18:37] [I] [TRT] Opset version:    17
+[04/24/2026-15:18:37] [I] [TRT] Producer name:    pytorch
+[04/24/2026-15:18:37] [I] [TRT] Producer version: 2.3.0
+[04/24/2026-15:18:37] [I] [TRT] Domain:           
+[04/24/2026-15:18:37] [I] [TRT] Model version:    0
+[04/24/2026-15:18:37] [I] [TRT] Doc string:       
+[04/24/2026-15:18:37] [I] [TRT] ----------------------------------------------------------------
+[04/24/2026-15:18:37] [W] [TRT] onnx2trt_utils.cpp:372: Your ONNX model has been generated with INT64 weights, while TensorRT does not natively support INT64. Attempting to cast down to INT32.
+[04/24/2026-15:18:37] [I] Finished parsing network model. Parse time: 0.225848
+[04/24/2026-15:18:37] [W] [TRT] DLA requests all profiles have same min, max, and opt value. All dla layers are falling back to GPU
+[04/24/2026-15:18:37] [I] [TRT] Graph optimization time: 0.0134069 seconds.
+[04/24/2026-15:18:37] [I] [TRT] [MemUsageChange] Init cuBLAS/cuBLASLt: CPU +1, GPU +0, now: CPU 1317, GPU 11439 (MiB)
+[04/24/2026-15:18:37] [I] [TRT] [MemUsageChange] Init cuDNN: CPU +0, GPU +0, now: CPU 1317, GPU 11439 (MiB)
+[04/24/2026-15:18:37] [I] [TRT] Local timing cache in use. Profiling results in this builder pass will not be stored.
+[04/24/2026-16:39:18] [I] [TRT] Some tactics do not have sufficient workspace memory to run. Increasing workspace size will enable more tactics, please check verbose output for requested sizes.
+[04/24/2026-21:31:24] [I] [TRT] Detected 1 inputs and 1 output network tensors.
+[04/24/2026-21:31:25] [I] [TRT] Total Host Persistent Memory: 130304
+[04/24/2026-21:31:25] [I] [TRT] Total Device Persistent Memory: 8192
+[04/24/2026-21:31:25] [I] [TRT] Total Scratch Memory: 384
+[04/24/2026-21:31:25] [I] [TRT] [MemUsageStats] Peak memory usage of TRT CPU/GPU memory allocators: CPU 33 MiB, GPU 16245 MiB
+[04/24/2026-21:31:25] [I] [TRT] [BlockAssignment] Started assigning block shifts. This will take 190 steps to complete.
+[04/24/2026-21:31:25] [I] [TRT] [BlockAssignment] Algorithm ShiftNTopDown took 23.179ms to assign 8 blocks to 190 nodes requiring 10771682816 bytes.
+[04/24/2026-21:31:25] [I] [TRT] Total Activation Memory: 10771682816
+[04/24/2026-21:31:26] [I] [TRT] [MemUsageChange] Init cuBLAS/cuBLASLt: CPU +0, GPU +0, now: CPU 1489, GPU 16325 (MiB)
+[04/24/2026-21:31:26] [I] [TRT] [MemUsageChange] Init cuDNN: CPU +0, GPU +0, now: CPU 1489, GPU 16325 (MiB)
+[04/24/2026-21:31:26] [W] [TRT] TensorRT encountered issues when converting weights between types and that could affect accuracy.
+[04/24/2026-21:31:26] [W] [TRT] If this is not the desired behavior, please modify the weights or retrain with regularization to adjust the magnitude of the weights.
+[04/24/2026-21:31:26] [W] [TRT] Check verbose logs for the list of affected weights.
+[04/24/2026-21:31:26] [W] [TRT] - 17 weights are affected by this issue: Detected subnormal FP16 values.
+[04/24/2026-21:31:26] [W] [TRT] - 12 weights are affected by this issue: Detected values less than smallest positive FP16 subnormal value and converted them to the FP16 minimum subnormalized value.
+[04/24/2026-21:31:26] [I] [TRT] [MemUsageChange] TensorRT-managed allocation in building engine: CPU +31, GPU +32, now: CPU 31, GPU 32 (MiB)
+[04/24/2026-21:31:26] [I] Engine built in 22374.5 sec.
+[04/24/2026-21:31:26] [I] [TRT] Loaded engine size: 32 MiB
+[04/24/2026-21:31:26] [I] [TRT] [MemUsageChange] Init cuBLAS/cuBLASLt: CPU +0, GPU +8, now: CPU 254, GPU 15616 (MiB)
+[04/24/2026-21:31:26] [I] [TRT] [MemUsageChange] Init cuDNN: CPU +0, GPU +8, now: CPU 254, GPU 15624 (MiB)
+[04/24/2026-21:31:26] [I] [TRT] [MemUsageChange] TensorRT-managed allocation in engine deserialization: CPU +0, GPU +31, now: CPU 0, GPU 31 (MiB)
+[04/24/2026-21:31:26] [I] Engine deserialized in 0.0824473 sec.
+[04/24/2026-21:31:26] [I] [TRT] [MemUsageChange] Init cuBLAS/cuBLASLt: CPU +0, GPU +0, now: CPU 254, GPU 15624 (MiB)
+[04/24/2026-21:31:26] [I] [TRT] [MemUsageChange] Init cuDNN: CPU +0, GPU +0, now: CPU 254, GPU 15624 (MiB)
+[04/24/2026-21:31:29] [I] [TRT] [MemUsageChange] TensorRT-managed allocation in IExecutionContext creation: CPU +0, GPU +10273, now: CPU 0, GPU 10304 (MiB)
+[04/24/2026-21:31:29] [I] Setting persistentCacheLimit to 0 bytes.
+[04/24/2026-21:31:29] [I] Using random values for input input
+[04/24/2026-21:31:29] [I] Input binding for input with dimensions 6x1x152x152x152 is created.
+[04/24/2026-21:31:29] [I] Output binding for output with dimensions 6x1x152x152x152 is created.
+[04/24/2026-21:31:29] [I] Starting inference
+[04/24/2026-21:32:06] [I] Warmup completed 1 queries over 200 ms
+[04/24/2026-21:32:06] [I] Timing trace has 10 queries over 36.5887 s
+[04/24/2026-21:32:06] [I] 
+[04/24/2026-21:32:06] [I] === Trace details ===
+[04/24/2026-21:32:06] [I] Trace averages of 10 runs:
+[04/24/2026-21:32:06] [I] Average on 10 runs - GPU latency: 3324.47 ms - Host latency: 3338.19 ms (enqueue 6.69584 ms)
+[04/24/2026-21:32:06] [I] 
+[04/24/2026-21:32:06] [I] === Performance summary ===
+[04/24/2026-21:32:06] [I] Throughput: 0.273309 qps
+[04/24/2026-21:32:06] [I] Latency: min = 3334.89 ms, max = 3343.96 ms, mean = 3338.19 ms, median = 3337.88 ms, percentile(90%) = 3338.23 ms, percentile(95%) = 3343.96 ms, percentile(99%) = 3343.96 ms
+[04/24/2026-21:32:06] [I] Enqueue Time: min = 3.97063 ms, max = 7.45703 ms, mean = 6.69584 ms, median = 6.96973 ms, percentile(90%) = 7.04883 ms, percentile(95%) = 7.45703 ms, percentile(99%) = 7.45703 ms
+[04/24/2026-21:32:06] [I] H2D Latency: min = 6.63477 ms, max = 12.1774 ms, mean = 7.19504 ms, median = 6.64258 ms, percentile(90%) = 6.64697 ms, percentile(95%) = 12.1774 ms, percentile(99%) = 12.1774 ms
+[04/24/2026-21:32:06] [I] GPU Compute Time: min = 3323.39 ms, max = 3325.07 ms, mean = 3324.47 ms, median = 3324.52 ms, percentile(90%) = 3324.87 ms, percentile(95%) = 3325.07 ms, percentile(99%) = 3325.07 ms
+[04/24/2026-21:32:06] [I] D2H Latency: min = 4.86328 ms, max = 6.7207 ms, mean = 6.53076 ms, median = 6.71582 ms, percentile(90%) = 6.71875 ms, percentile(95%) = 6.7207 ms, percentile(99%) = 6.7207 ms
+[04/24/2026-21:32:06] [I] Total Host Walltime: 36.5887 s
+[04/24/2026-21:32:06] [I] Total GPU Compute Time: 33.2447 s
+[04/24/2026-21:32:06] [I] Explanations of the performance metrics are printed in the verbose logs.
+[04/24/2026-21:32:06] [I] 
+&&&& PASSED TensorRT.trtexec [TensorRT v8602] # /usr/src/tensorrt/bin/trtexec --onnx=/home/ros2_ws/src/capacitynet/config/unet3d.onnx --saveEngine=/home/ros2_ws/src/capacitynet/config/unet3d.trt --fp16 --minShapes=input:1x1x152x152x152 --optShapes=input:6x1x152x152x152 --maxShapes=input:6x1x152x152x152 --memPoolSize=workspace:4096 --noTF32 --minTiming=1 --avgTiming=1
