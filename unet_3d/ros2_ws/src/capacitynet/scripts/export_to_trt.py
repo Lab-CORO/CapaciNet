@@ -105,7 +105,7 @@ def build_trt_engine(spatial, onnx_path, engine_path, log_path):
         f'--minShapes=input:{shape_min}',
         f'--optShapes=input:{shape_opt}',
         f'--maxShapes=input:{shape_opt}',
-        '--memPoolSize=workspace:4096',
+        '--memPoolSize=workspace:16384',
         '--noTF32',
         '--minTiming=1',   # 1 timing run per kernel (vs default 4) — much faster build
         '--avgTiming=1',   # 1 average timing (vs default 8)

@@ -13,7 +13,9 @@ import numpy as np
 import torch
 import yaml
 import time
+import h5py
 from curobo_msgs.srv import GetVoxelGrid
+from std_srvs.srv import Trigger
 from pytorch3dunet.unet3d.model import get_model
 from pytorch3dunet.unet3d import utils
 from reachability_map_visualizer.msg import WorkSpace
@@ -47,6 +49,9 @@ class ReachabilityNode(Node):
         self.declare_parameter('log_control_timing', True)
         self.declare_parameter('log_quality_scores', False)
 
+        # Declare save path for HDF5 export
+        self.declare_parameter('save_map_path', '~/reachability_map.h5')
+
         # Service client  /unified_planner/
         self.voxel_client = self.create_client(GetVoxelGrid, '/unified_planner/get_voxel_grid')
         while not self.voxel_client.wait_for_service(timeout_sec=1.0):
@@ -56,6 +61,10 @@ class ReachabilityNode(Node):
 
         # Publisher: WorkSpace message
         self.ws_pub = self.create_publisher(WorkSpace, '/reachability_map', 10)
+
+        # Service: save latest inference result to HDF5
+        self.save_map_srv = self.create_service(
+            Trigger, '/reachability_node/save_map', self.handle_save_map)
 
         # Load UNet3D model
         config_path = "/home/ros2_ws/src/capacitynet/config/test_reach.yaml"
@@ -85,9 +94,13 @@ class ReachabilityNode(Node):
             try:
                 from .trt_model import TRTModel
                 self.trt_model = TRTModel(trt_engine_path)
-                self.trt_model.warmup(spatial=152)
+                self.trt_model.warmup(spatial=128)
                 torch.cuda.synchronize()
                 self.get_logger().info(f"TRT engine loaded and warmed up: {trt_engine_path}")
+                if self.trt_model._cuda_graph is not None:
+                    self.get_logger().info("CUDA Graph active for batch=1 — dispatch overhead eliminated")
+                else:
+                    self.get_logger().warn("CUDA Graph capture failed — using normal TRT execution")
             except Exception as e:
                 self.get_logger().warn(f"TRT engine load failed ({e}), falling back to PyTorch")
                 self.trt_model = None
@@ -147,6 +160,11 @@ class ReachabilityNode(Node):
         self.log_control_timing = self.get_parameter('log_control_timing').value
         self.log_quality_scores = self.get_parameter('log_quality_scores').value
 
+        # Cache for save_map service
+        self._last_voxel_grid_np = None  # float32 (nx,ny,nz), 1=free 0=occupied
+        self._last_prediction_np = None  # float32 (nx,ny,nz), values 0-1
+        self._last_vg_info = None        # dict: origin, resolution, size_x/y/z
+
         # Timer - 0.1Hz for prediction and publishing pipeline
         self.create_timer(10.0, self.call_voxel_service)  # 10Hz
 
@@ -179,6 +197,9 @@ class ReachabilityNode(Node):
             vg.size_x, vg.size_y, vg.size_z
         ).copy()
 
+        # Crop to reshape 152 to 128
+        voxel_map = voxel_map[12:140, 12:140, 20:148]
+
         t_after_conversion = time.time()
 
         current_resolution = float(vg.resolutions.x)
@@ -189,37 +210,24 @@ class ReachabilityNode(Node):
         # but we avoid multiple CPU-side intermediate allocations.
         raw_gpu = torch.from_numpy(voxel_map).to(self.device, non_blocking=True)
 
+        dtype = torch.float16 if self.use_fp16 else torch.float32
         if abs(current_resolution - target_resolution) > 1e-6:
-            scale_factor = current_resolution / target_resolution
-            new_size = (
-                int(vg.size_x * scale_factor),
-                int(vg.size_y * scale_factor),
-                int(vg.size_z * scale_factor),
-            )
-            # Invert occupancy, cast to FP16/FP32, resize — all on GPU
-            dtype = torch.float16 if self.use_fp16 else torch.float32
+            # Invert occupancy, cast, and resize the already-cropped 128³ tensor to 128³
             voxel_map_ts = torch.nn.functional.interpolate(
                 (1 - raw_gpu).to(dtype).unsqueeze(0).unsqueeze(0),
-                size=new_size,
+                size=(128, 128, 128),
                 mode='nearest',
             )
-            vg_info = {
-                'origin': vg.origin,
-                'resolution': target_resolution,
-                'size_x': new_size[0],
-                'size_y': new_size[1],
-                'size_z': new_size[2],
-            }
         else:
-            dtype = torch.float16 if self.use_fp16 else torch.float32
             voxel_map_ts = (1 - raw_gpu).to(dtype).unsqueeze(0).unsqueeze(0)
-            vg_info = {
-                'origin': vg.origin,
-                'resolution': current_resolution,
-                'size_x': vg.size_x,
-                'size_y': vg.size_y,
-                'size_z': vg.size_z,
-            }
+
+        vg_info = {
+            'origin': vg.origin,
+            'resolution': target_resolution if abs(current_resolution - target_resolution) > 1e-6 else current_resolution,
+            'size_x': 128,
+            'size_y': 128,
+            'size_z': 128,
+        }
 
         t_after_resize = time.time()
 
@@ -308,6 +316,11 @@ class ReachabilityNode(Node):
             t_after_control = t_after_prediction
             t_after_cmd_publish = t_after_prediction
 
+        # Cache latest inference result for the save_map service
+        self._last_prediction_np = prediction_center.float().cpu().numpy()
+        self._last_voxel_grid_np = voxel_map_ts.squeeze().float().cpu().numpy()
+        self._last_vg_info = vg_info
+
         # Convert center RM to CPU for publishing
         if self.use_fp16:
             prediction_cpu = prediction_center.float().cpu().numpy()
@@ -384,9 +397,9 @@ class ReachabilityNode(Node):
 
         # Fill voxel grid info
         ws_msg.resolution = float(vg_info['resolution'])
-        ws_msg.size_x = int(vg_info['size_x'])
-        ws_msg.size_y = int(vg_info['size_y'])
-        ws_msg.size_z = int(vg_info['size_z'])
+        ws_msg.size_x = 128 #int(vg_info['size_x'])
+        ws_msg.size_y = 128 #int(vg_info['size_y'])
+        ws_msg.size_z = 128 #int(vg_info['size_z'])
 
         # Set origin
         ws_msg.origine.x = float(vg_info['origin'].x)
@@ -420,6 +433,52 @@ class ReachabilityNode(Node):
                 f"Workspace center received: ({msg.point.x:.3f}, {msg.point.y:.3f}, {msg.point.z:.3f})"
             )
             self._last_logged_center = workspace_center
+
+
+    def _save_to_hdf5(self, path: str) -> None:
+        """Write last reachability map and voxel grid to an HDF5 file.
+
+        Format matches the C++ data_generation pipeline so the file can be
+        loaded directly by reachability_map_visualizer.
+        """
+        pred = self._last_prediction_np.astype(np.float64)
+        vg = self._last_voxel_grid_np.astype(np.float64)
+        info = self._last_vg_info
+        res = float(info['resolution'])
+        ox = float(info['origin'].x)
+        oy = float(info['origin'].y)
+        oz = float(info['origin'].z)
+        nx, ny, nz = pred.shape
+
+        path = os.path.expanduser(path)
+        with h5py.File(path, 'w') as f:
+            grp = f.create_group('/group/0')
+            for name, data in [('reachability_map', pred), ('voxel_grid', vg)]:
+                ds = grp.create_dataset(name, data=data)
+                ds.attrs['voxel_size'] = res
+                ds.attrs['origine_x'] = ox
+                ds.attrs['origine_y'] = oy
+                ds.attrs['origine_z'] = oz
+                ds.attrs['voxel_grid_size_x'] = float(nx)
+                ds.attrs['voxel_grid_size_y'] = float(ny)
+                ds.attrs['voxel_grid_size_z'] = float(nz)
+
+    def handle_save_map(self, request, response):
+        if self._last_prediction_np is None:
+            response.success = False
+            response.message = 'No inference result yet; wait for the first timer tick.'
+            return response
+        path = self.get_parameter('save_map_path').value
+        try:
+            self._save_to_hdf5(path)
+            self.get_logger().info(f'Reachability map saved to {path}')
+            response.success = True
+            response.message = f'Saved to {path}'
+        except Exception as e:
+            self.get_logger().error(f'Failed to save HDF5: {e}')
+            response.success = False
+            response.message = str(e)
+        return response
 
 
 def main(args=None):

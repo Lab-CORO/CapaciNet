@@ -3,8 +3,19 @@
 Uses TensorRT 8.6 Python API (execute_async_v3 + set_tensor_address).
 Input and output tensors must already be on CUDA — no CPU roundtrip.
 
-Note: the engine expects fixed spatial dims (152³ by default) because
+Note: the engine expects fixed spatial dims (128³ by default) because
 F.interpolate skip-connection sizes are baked as constants during ONNX export.
+
+CUDA Graph: captured during warmup() for batch=1 only. Replaying a CUDA Graph
+eliminates per-call CPU kernel-dispatch overhead (~10–20 ms on Jetson). Batch≠1
+(gradient mode, batch=9) falls back to the standard execute_async_v3 path.
+
+Stream discipline:
+  torch.cuda.graph(g, stream=s) makes s the active capture stream inside the
+  with-block. execute_async_v3 must receive s.cuda_stream so its kernels are
+  recorded on s (not the default stream). At replay: copy_ input on s (ordered
+  before replay), replay() on s, wait_stream() so default stream waits before
+  clone() reads the output buffer.
 """
 
 import torch
@@ -49,16 +60,66 @@ class TRTModel:
         self.output_dtype = _TRT_DTYPE_TO_TORCH.get(trt_out_dtype, torch.float32)
 
         # Maximum batch the engine accepts (set at build time to avoid int32 overflow
-        # at the full-resolution decoder concat layer: B×96×D³ < 2^31).
+        # at the full-resolution decoder concat layer: B×48×D³ < 2^31).
         # get_tensor_profile_shape returns (min, opt, max) tuples.
         max_shape = self.engine.get_tensor_profile_shape(self.input_name, 0)[2]
         self.max_batch = max_shape[0]
 
+        # CUDA Graph state — populated by _capture_graph() called from warmup().
+        self._cuda_graph = None
+        self._graph_stream = None
+        self._graph_input_buf = None
+        self._graph_output_buf = None
+
+    def _capture_graph(self, spatial: int):
+        """Capture a CUDA Graph for batch=1 inference.
+
+        A dedicated stream is created and passed to torch.cuda.graph() so that
+        execute_async_v3 submits kernels onto the capture stream — the only way
+        they get recorded. Getting the stream handle outside the with-block (as
+        torch.cuda.current_stream()) would yield the normal stream and produce an
+        empty graph.
+        """
+        self._graph_stream = torch.cuda.Stream()
+
+        self._graph_input_buf = torch.zeros(
+            1, 1, spatial, spatial, spatial, dtype=self.input_dtype, device='cuda')
+        self._graph_output_buf = torch.zeros(
+            1, 1, spatial, spatial, spatial, dtype=self.output_dtype, device='cuda')
+
+        # Fix tensor addresses permanently for this graph.
+        self.context.set_input_shape(self.input_name, (1, 1, spatial, spatial, spatial))
+        self.context.set_tensor_address(self.input_name,  self._graph_input_buf.data_ptr())
+        self.context.set_tensor_address(self.output_name, self._graph_output_buf.data_ptr())
+
+        # Warmup on dedicated stream before capture (stabilises cuDNN kernel state).
+        with torch.cuda.stream(self._graph_stream):
+            self.context.execute_async_v3(self._graph_stream.cuda_stream)
+        torch.cuda.synchronize()
+
+        # Capture: stream=_graph_stream makes it the active capture stream inside
+        # the with-block, so execute_async_v3(_graph_stream.cuda_stream) is recorded.
+        self._cuda_graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(self._cuda_graph, stream=self._graph_stream):
+            self.context.execute_async_v3(self._graph_stream.cuda_stream)
+        torch.cuda.synchronize()
+
     def _infer_single(self, x: torch.Tensor) -> torch.Tensor:
         """Run one TRT forward pass. x must fit within max_batch."""
+        if x.shape[0] == 1 and self._cuda_graph is not None:
+            # copy_ on _graph_stream ensures it finishes before replay reads input.
+            with torch.cuda.stream(self._graph_stream):
+                self._graph_input_buf.copy_(x)
+            # replay() runs on the capture stream (_graph_stream).
+            self._cuda_graph.replay()
+            # Inject dependency so default stream waits before clone() reads output.
+            torch.cuda.current_stream().wait_stream(self._graph_stream)
+            return self._graph_output_buf.clone()
+
+        # Fallback: dynamic batch or graph not yet captured.
         self.context.set_input_shape(self.input_name, tuple(x.shape))
         output = torch.empty(x.shape, dtype=self.output_dtype, device='cuda')
-        self.context.set_tensor_address(self.input_name, x.data_ptr())
+        self.context.set_tensor_address(self.input_name,  x.data_ptr())
         self.context.set_tensor_address(self.output_name, output.data_ptr())
         stream = torch.cuda.current_stream().cuda_stream
         ok = self.context.execute_async_v3(stream_handle=stream)
@@ -85,14 +146,16 @@ class TRTModel:
         chunks = x.split(self.max_batch, dim=0)
         return torch.cat([self._infer_single(c) for c in chunks], dim=0)
 
-    def warmup(self, spatial: int = 152):
-        """Run dummy inferences to prime cuDNN kernel selection.
+    def warmup(self, spatial: int = 128):
+        """Run dummy inferences to prime cuDNN kernel selection, then capture CUDA Graph.
 
         Should be called once at node init before real data arrives.
-        Warms up both batch=1 and the maximum batch the engine was built for.
+        Warms up both batch=1 and the maximum batch the engine was built for,
+        then captures a CUDA Graph for batch=1 to eliminate future dispatch overhead.
         """
         for batch in (1, self.max_batch):
             dummy = torch.zeros(batch, 1, spatial, spatial, spatial,
                                 dtype=self.input_dtype, device='cuda')
             self.infer(dummy)
         torch.cuda.synchronize()
+        self._capture_graph(spatial)
