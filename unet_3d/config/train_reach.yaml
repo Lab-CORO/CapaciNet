@@ -1,3 +1,4 @@
+
 # --- configuration principale -------------------------------------------------
 manual_seed: 42  # assure une reproductibilité
 dataset:
@@ -9,8 +10,9 @@ model:
   out_channels: 1
   initial_feature_maps: 32
   final_sigmoid: true  # régression, pas de sigmoïde en sortie
+  patch_size: [76, 76, 76]
   layer_order: gcr
-  f_maps: [16, 32, 64,128,256]
+  f_maps: [32, 64,128,256, 512]
   num_groups: 8
 
 
@@ -18,29 +20,29 @@ loss:
   name: BCEDiceLoss  # un bon compromis entre L1 et MSE
 
 eval_metric:
-  name: DiceCoefficient     # métrique plus pertinente pour la régression d’image
+  name: DiceCoefficient  # métrique plus pertinente pour la régression d’image
 
 optimizer:
-  learning_rate: 0.0001     # 1e-4 (good starting point for Adam)
+  learning_rate: 0.00005     # augmenté à 2e-4 pour redémarrer l'entraînement
   weight_decay: 0.00001     # keep as is
 
 lr_scheduler:
   name: ReduceLROnPlateau
-  mode: min                 # we want to minimize validation loss
-  factor: 0.5               # reduce LR by half instead of 0.1 (less aggressive)
-  patience: 10              # wait 10 epochs before reducing
-  cooldown: 2               # wait a bit before resuming LR checks
-  min_lr: 0.0000001         # don’t go below 1e-7
+  mode: max                 # we want to maximize DiceCoefficient
+  factor: 0.5               # reduce LR by half
+  patience: 50              # wait 50 validations (3000 iterations) before reducing
+  cooldown: 10              # wait a bit before resuming LR checks
+  min_lr: 0.00000001          #
 
 trainer:
   eval_score_higher_is_better: True
-  checkpoint_dir: "/workspace/capacitynet/data/checkpoint"
-  resume: null
+  checkpoint_dir: "/lustre06/project/6089348/willore/CapaciNet/unet_3d/data_finetune_002m/checkpoint"
+  resume: "/lustre06/project/6089348/willore/CapaciNet/unet_3d/data_finetune_002m/checkpoint/last_checkpoint.pytorch"
   pre_trained: null
-  validate_after_iters: 10
-  log_after_iters: 10
+  validate_after_iters: 100
+  log_after_iters: 100
   max_num_epochs: 500
-  max_num_iterations: 15000000
+  max_num_iterations: 2000000
 
 loaders:
   num_workers: 1
@@ -48,7 +50,7 @@ loaders:
   label_internal_path: label
 
   train:
-    file_paths: ["/workspace/capacitynet/data/data_format/train/16_07_2025_01_04_3_group_70.h5"]
+    file_paths: ["/lustre06/project/6089348/willore/CapaciNet/unet_3d/data/train_augmented"]
     slice_builder:
       name: SliceBuilder
       patch_shape: [152, 152, 152]
@@ -64,7 +66,7 @@ loaders:
           expand_dims: true
 
   val:
-    file_paths: ["/workspace/capacitynet/data/data_format/val/16_07_2025_01_04_3_group_70.h5"]
+    file_paths: ["/lustre06/project/6089348/willore/CapaciNet/unet_3d/data/val"]
     slice_builder:
       name: SliceBuilder
       patch_shape: [152, 152, 152]

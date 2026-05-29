@@ -11,17 +11,17 @@ CapaciNet provides a complete pipeline for generating robot **R**eachability **M
 ```
 CapaciNet/
  └─ unet_3d/
-     ├─ launch/                  # ROS 2 launch files
+     ├─ launch/                        # ROS 2 launch files
      │    ├─ create_reachability_map.launch.py
      │    └─ generate_data.launch.py
-     ├─ scripts/
-     │    ├─ format_data.py      # HDF5 → Numpy/PNG converter
-     │    └─ convert_to_unet.py  # Voxel grid → 3‑D‑U‑Net dataset
+     ├─ script/
+     │    ├─ format_data.py            # HDF5 converter: upsampling + augmentation + train/val split
+     │    └─ augment_rotation_z.py     # RotationAugmenter class (used by format_data.py)
      ├─ config/
-     │    └─ train_reach.yaml    # Training hyper‑parameters
+     │    └─ train_reach.yaml          # Training hyper‑parameters
      └─ data/
-          ├─ train/              # Raw + label volumes for training
-          └─ val/                # Raw + label volumes for validation
+          ├─ train/                    # Raw + label volumes for training
+          └─ val/                      # Raw + label volumes for validation
 ```
 
 ---
@@ -46,34 +46,54 @@ Each RM voxel is exported as a 3‑D Numpy array together with a binary reachabi
 
 ### 3  Re‑format the data
 
-```bash
-python unet_3d/scripts/format_data.py --input data/raw --output data/formatted
-```
+`unet_3d/script/format_data.py` reads the raw HDF5 files produced by the data generation step
+(structure `group/N/voxel_grid` + `reachability_map`), converts them to the **pytorch‑3dunet**
+layout (`raw` / `label` datasets), and optionally upsamples, augments, and splits the dataset.
 
-This converts the Numpy blobs to `*.h5` volumes and stores meta‑data such as voxel resolution, grid origin, and RM size as HDF5 attributes.
-
-### 4  Convert to the 3‑D‑U‑Net layout
-
-```bash
-python unet_3d/scripts/convert_to_unet.py --src data/formatted --dst data
-```
-
-The script produces the folder hierarchy expected by **pytorch‑3dunet**.
-
-### 5  Split into training and validation sets
+**Context:** each source file can contain multiple robot configurations (groups). The script
+iterates over all groups, automatically detects the voxel resolution from the `voxel_size`
+attribute, and upsamples to 0.02 m if the resolution differs.
 
 ```bash
-python - <<'PY'
-from pathlib import Path, shutil
-from sklearn.model_selection import train_test_split
-files = sorted(Path('unet_3d/data/raw').glob('*.h5'))
-train, val = train_test_split(files, test_size=0.2, random_state=42)
-for f in train: (Path('unet_3d/data/train')/f.name).write_bytes(f.read_bytes())
-for f in val:   (Path('unet_3d/data/val')/f.name).write_bytes(f.read_bytes())
-PY
+# Minimal usage – convert only
+python unet_3d/script/format_data.py
+
+# Custom input / output directories
+python unet_3d/script/format_data.py \
+    --input_dir  /path/to/raw/data/ \
+    --output_dir /path/to/unet3d/data/
+
+# With data augmentation (3 random Z‑rotations per group)
+python unet_3d/script/format_data.py --n_copies 3
+
+# With augmentation + train/val split (90 % / 10 %)
+python unet_3d/script/format_data.py --n_copies 3 --split
+
+# Full control
+python unet_3d/script/format_data.py \
+    --input_dir      /path/to/raw/data/ \
+    --output_dir     /path/to/unet3d/data/ \
+    --n_copies       5   \
+    --angle_spectrum 90  \
+    --aug_seed       0   \
+    --split              \
+    --val_ratio      0.15 \
+    --seed           42
 ```
 
-Feel free to use a different split ratio.
+| Argument | Default | Description |
+|---|---|---|
+| `--input_dir` | `…/data/` | Source HDF5 files |
+| `--output_dir` | `…/unet_3d/data/` | Destination directory |
+| `--n_copies` | `0` | Augmented copies per group (0 = disabled) |
+| `--angle_spectrum` | `180` | Max Z‑rotation angle in degrees |
+| `--aug_seed` | `42` | Random seed for augmentation |
+| `--split` | off | Move files into `train/` and `val/` after conversion |
+| `--val_ratio` | `0.1` | Fraction of files assigned to validation |
+| `--seed` | `0` | Random seed for train/val split |
+
+The augmentation logic lives in `augment_rotation_z.py` as a `RotationAugmenter` class and
+can also be imported independently in other scripts.
 
 ### 6  *(Optional)* Pad the volumes
 

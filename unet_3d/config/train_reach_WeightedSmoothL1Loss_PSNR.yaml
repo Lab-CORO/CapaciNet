@@ -1,0 +1,104 @@
+# --- configuration principale -------------------------------------------------
+dataset:                         # <-- nécessaire pour accepter des labels float32
+  name: HDF5Dataset
+
+model:
+  name: UNet3D
+  in_channels: 1
+  out_channels: 1
+  initial_feature_maps: 16
+  final_sigmoid: false           # régression
+  patch_size: [130, 130, 130]     # identique au pad offline
+  num_groups: 8
+loss:
+  name: SmoothL1Loss
+
+eval_metric:
+  name: PSNR                     # métrique de régression disponible
+
+optimizer:
+  # initial learning rate
+  learning_rate: 0.0002
+  # weight decay
+  weight_decay: 0.00001
+
+trainer:
+  # model with lower eval score is considered better
+  eval_score_higher_is_better: False
+  # path to the checkpoint directory
+  checkpoint_dir: "/lustre06/project/6089348/willore/CapaciNet/unet_3d/data/checkpoint"
+  # path to latest checkpoint; if provided the training will be resumed from that checkpoint
+  resume: null
+  # path to the best_checkpoint.pytorch; to be used for fine-tuning the model with additional ground truth
+  # make sure to decrease the learning rate in the optimizer config accordingly
+  pre_trained: null
+  # how many iterations between validations
+  validate_after_iters: 500
+  # how many iterations between tensorboard logging
+  log_after_iters: 100
+  # max number of epochs
+  max_num_epochs: 200
+  # max number of iterations
+  max_num_iterations: 17500
+
+# ------------------------------------------------------------------------------
+
+loaders:
+  num_workers: 8
+  batch_size: 2
+
+  # chemins internes dans chaque .h5
+  raw_internal_path: raw
+  label_internal_path: label
+
+  # *** TRAIN ***
+  train:
+    file_paths:
+      - "/lustre06/project/6089348/willore/CapaciNet/unet_3d/data/train"
+
+    slice_builder:
+      name: FilterSliceBuilder
+      patch_shape:  [130, 130, 130]
+      stride_shape: [130, 130, 130]   # pas de recouvrement
+      threshold: 0.0                 # (<— pas de filtrage, on garde tous les patchs)
+      slack_acceptance: 1.0          # (<— accepte tout si threshold=0)
+
+    transformer:
+      raw:
+        - name: Normalize
+        - name: ToTensor
+          expand_dims: true
+      label:
+        - name: Identity
+        - name: ToTensor
+          expand_dims: true
+
+  # *** VALIDATION ***
+  val:
+    file_paths:
+      - "/lustre06/project/6089348/willore/CapaciNet/unet_3d/data/val"
+
+    slice_builder:
+      name: FilterSliceBuilder
+      patch_shape:  [130, 130, 130]
+      stride_shape: [130, 130, 130]
+      threshold: 0.0
+      slack_acceptance: 1.0
+
+    transformer:
+      raw:
+        - name: Normalize
+        - name: ToTensor
+          expand_dims: true
+      label:
+        - name: Identity
+        - name: ToTensor
+          expand_dims: true
+
+# ------------------------------------------------------------------------------
+
+
+
+device: cuda                      # entraîne sur GPU (RTX 4070)
+
+
