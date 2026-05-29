@@ -1,0 +1,1 @@
+Test de l'entrainement avec BceDiceloos, nomalement ne devrais pas fonctionner.

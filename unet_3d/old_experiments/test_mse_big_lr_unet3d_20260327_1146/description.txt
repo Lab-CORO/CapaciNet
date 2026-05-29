@@ -1,0 +1,1 @@
+test avec un plus gros LR et la loss fct mse avec du residual

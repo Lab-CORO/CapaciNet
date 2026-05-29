@@ -1,0 +1,18 @@
+=== CapaciNet Evaluation Report ===
+
+Val files : 35
+Voxels    : 122,913,280
+
+-- Regression --
+MAE       : 0.015059
+RMSE      : 0.054954
+Pearson r : 0.973899
+
+-- Classification (threshold 0.5) --
+TP: 17,943,055   FP: 644,062
+FN: 927,109   TN: 103,399,054
+Precision : 0.9653
+Recall    : 0.9509
+F1        : 0.9581
+IoU       : 0.9195
+Accuracy  : 0.9872

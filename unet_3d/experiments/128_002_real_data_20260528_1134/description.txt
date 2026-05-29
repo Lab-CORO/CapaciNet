@@ -1,0 +1,1 @@
+finish to train from 128 input with real data

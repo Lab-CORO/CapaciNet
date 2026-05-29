@@ -1,0 +1,1 @@
+test to train 0.02 with a big weight to bce more than dice
