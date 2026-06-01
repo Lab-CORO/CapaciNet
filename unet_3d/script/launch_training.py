@@ -6,12 +6,31 @@ Usage:
     python launch_training.py --list    # list all experiments and exit
 """
 import argparse
+import atexit
 import datetime
 import os
 import shutil
-import socket
 import subprocess
 import sys
+
+# =============================================================================
+#  TENSORBOARD SESSION STATE
+# =============================================================================
+
+_tb_symlinks_added: list = []
+
+
+def _cleanup_tb_symlinks():
+    for link in _tb_symlinks_added:
+        try:
+            if os.path.islink(link):
+                os.unlink(link)
+        except OSError:
+            pass
+
+
+atexit.register(_cleanup_tb_symlinks)
+
 
 # =============================================================================
 #  CONSTANTS
@@ -955,50 +974,45 @@ def resubmit_experiment(exp):
         submit_job(job_sh_path)
 
 
-def _free_port():
-    """Return an available TCP port on localhost."""
-    with socket.socket() as s:
-        s.bind(("", 0))
-        return s.getsockname()[1]
+def setup_tensorboard_jupyterhub(exp):
+    """Add exp logs to ~/tensorboard_logs/ and print JupyterHub access instructions.
 
-
-def launch_tensorboard(exp):
-    """Start TensorBoard for the given experiment and print the SSH tunnel command.
-
-    TensorBoard is launched as a background process. The user is given the
-    ssh -L command to run on their local machine to access it.
+    Creates a per-experiment symlink inside ~/tensorboard_logs/ so multiple
+    experiments can be viewed simultaneously. All symlinks are removed via
+    atexit when this script exits.
     """
-    tb_logdir = os.path.join(exp["checkpoint_dir"], "logs")
-    if not os.path.isdir(tb_logdir):
-        print(f"\n  No TensorBoard logs found at: {tb_logdir}")
+    tb_dir      = os.path.expanduser("~/tensorboard_logs")
+    tb_logs_src = os.path.join(exp["checkpoint_dir"], "logs")
+    link_path   = os.path.join(tb_dir, exp["name"])
+
+    if not os.path.isdir(tb_logs_src):
+        print(f"\n  No TensorBoard logs found at: {tb_logs_src}")
         print("  (Training may not have started yet.)")
         return
 
-    port = _free_port()
-    user = os.environ.get("USER", "username")
+    os.makedirs(tb_dir, exist_ok=True)
 
-    # Check that tensorboard is available
-    if subprocess.run(["which", "tensorboard"], capture_output=True).returncode != 0:
-        print("\n  tensorboard not found in PATH.")
-        print("  Activate the environment that has it installed first.")
+    if os.path.islink(link_path):
+        print(f"\n  {exp['name']} is already linked in ~/tensorboard_logs/")
+    elif os.path.exists(link_path):
+        print(f"\n  Warning: ~/tensorboard_logs/{exp['name']} exists as a real entry — skipping.")
         return
+    else:
+        os.symlink(tb_logs_src, link_path)
+        _tb_symlinks_added.append(link_path)
+        print(f"\n  Added: ~/tensorboard_logs/{exp['name']} → {tb_logs_src}")
 
-    proc = subprocess.Popen(
-        ["tensorboard", "--logdir", tb_logdir, "--port", str(port), "--host", "localhost"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
+    active = [os.path.basename(p) for p in _tb_symlinks_added if os.path.islink(p)]
     sep = "=" * 64
     print(f"\n{sep}")
-    print(f"  TensorBoard started  (PID {proc.pid})")
-    print(f"  Logs : {tb_logdir}")
-    print(f"{sep}")
-    print(f"\n  Run this on your LOCAL machine:")
-    print(f"\n    ssh -L {port}:localhost:{port} {user}@narval.computecanada.ca")
-    print(f"\n  Then open in your browser:")
-    print(f"\n    http://localhost:{port}")
-    print(f"\n  To stop TensorBoard:  kill {proc.pid}")
+    print(f"  TensorBoard via JupyterHub")
+    print(sep)
+    print(f"  Active : {', '.join(active) if active else '(none)'}")
+    print(f"")
+    print(f"  1. Open  : https://jupyterhub.narval.alliancecan.ca")
+    print(f"  2. Click : TensorBoard icon in the Launcher tab")
+    print(f"")
+    print(f"  Symlinks are removed when this script exits.")
     print(sep)
 
 
@@ -1112,7 +1126,7 @@ def explore_experiments():
             if log_files:
                 action_labels.append(f"View latest log  ({log_files[-1]})")
             if os.path.isdir(tb_logs_dir):
-                action_labels.append("Launch TensorBoard")
+                action_labels.append("View in TensorBoard (JupyterHub)")
             if os.path.isfile(job_sh_path):
                 action_labels.append("Resubmit with new time")
             if exp["has_best_ckpt"]:
@@ -1129,8 +1143,8 @@ def explore_experiments():
                 print()
                 _print_file(os.path.join(logs_dir, log_files[-1]))
 
-            elif action == "Launch TensorBoard":
-                launch_tensorboard(exp)
+            elif action == "View in TensorBoard (JupyterHub)":
+                setup_tensorboard_jupyterhub(exp)
 
             elif action == "Resubmit with new time":
                 resubmit_experiment(exp)

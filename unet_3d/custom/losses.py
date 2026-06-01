@@ -210,6 +210,38 @@ class BCEDiceGradientLoss(nn.Module):
         return self.bce_dice(input, target) + self.gradient_weight * gradient_loss_3d(input, target)
 
 
+class GradWeightedBCEDiceLoss(nn.Module):
+    """BCEDice where the BCE term is weighted by local target-gradient magnitude,
+    emphasising thin high-frequency structures (e.g. robot singularity lines) that a
+    plain voxel-mean loss averages away. `input` = logits, `target` in [0, 1].
+
+    Total loss = weighted_BCE(input, target) + alpha * Dice(input, target)
+    where each voxel's BCE is scaled by 1 + beta * |grad(target)|/max|grad(target)|.
+    """
+
+    def __init__(self, alpha=1.0, beta=5.0, eps=1e-6, **kwargs):
+        super().__init__()
+        self.alpha = alpha
+        self.beta = beta
+        self.eps = eps
+        self.dice = DiceLoss()
+
+    def _grad_weight(self, t):
+        # central/forward-difference magnitude on probabilities, padded back to (N,C,D,H,W)
+        gx = F.pad((t[:, :, 1:] - t[:, :, :-1]).abs(),        (0, 0, 0, 0, 0, 1))
+        gy = F.pad((t[:, :, :, 1:] - t[:, :, :, :-1]).abs(),  (0, 0, 0, 1, 0, 0))
+        gz = F.pad((t[:, :, :, :, 1:] - t[:, :, :, :, :-1]).abs(), (0, 1, 0, 0, 0, 0))
+        g = gx + gy + gz
+        gmax = g.amax(dim=(1, 2, 3, 4), keepdim=True).clamp(min=self.eps)
+        return (1.0 + self.beta * (g / gmax)).detach()  # weight in [1, 1 + beta]
+
+    def forward(self, input, target):
+        w = self._grad_weight(target)
+        bce = F.binary_cross_entropy_with_logits(input, target, reduction='none')
+        wbce = (w * bce).sum() / w.sum().clamp(min=self.eps)  # normalised weighted mean
+        return wbce + self.alpha * self.dice(input, target)
+
+
 class WeightedCrossEntropyLoss(nn.Module):
     """WeightedCrossEntropyLoss (WCE) as described in https://arxiv.org/pdf/1707.03237.pdf
     """
@@ -318,6 +350,10 @@ def _create_loss(name, loss_config, weight, ignore_index, pos_weight):
         alpha = loss_config.get('alpha', 1.)
         gradient_weight = loss_config.get('gradient_weight', 0.1)
         return BCEDiceGradientLoss(alpha=alpha, gradient_weight=gradient_weight)
+    elif name == 'GradWeightedBCEDiceLoss':
+        alpha = loss_config.get('alpha', 1.)
+        beta = loss_config.get('beta', 5.)
+        return GradWeightedBCEDiceLoss(alpha=alpha, beta=beta)
     elif name == 'CrossEntropyLoss':
         if ignore_index is None:
             ignore_index = -100  # use the default 'ignore_index' as defined in the CrossEntropyLoss

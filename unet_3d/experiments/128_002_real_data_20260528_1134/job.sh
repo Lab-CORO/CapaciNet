@@ -13,22 +13,22 @@ set -e
 
 # The Apptainer bind uses a relative path, so we must cd to SCRIPT_DIR
 cd /lustre06/project/6089348/willore
-# ── Step 1: Format data ──────────────────────────────────────────────────────
-module load python/3.11.5
-source /home/willore/envs/format_data_env/bin/activate
+# # ── Step 1: Format data ──────────────────────────────────────────────────────
+# module load python/3.11.5
+# source /home/willore/envs/format_data_env/bin/activate
 
-python /lustre06/project/6089348/willore/CapaciNet/unet_3d/script/format_data.py \
-    --input_dir  "/lustre06/project/6089348/willore/CapaciNet/unet_3d/experiments/128_002_real_data_20260528_1134/data_mixte" \
-    --output_dir "/lustre06/project/6089348/willore/CapaciNet/unet_3d/experiments/128_002_real_data_20260528_1134/data" \
-     \
-    --crop 12 140 12 140 20 148 \
-    --split \
-    --val_ratio  0.2 \
-    --seed       42
+# python /lustre06/project/6089348/willore/CapaciNet/unet_3d/script/format_data.py \
+#     --input_dir  "/lustre06/project/6089348/willore/CapaciNet/unet_3d/experiments/128_002_real_data_20260528_1134/data_mixte" \
+#     --output_dir "/lustre06/project/6089348/willore/CapaciNet/unet_3d/experiments/128_002_real_data_20260528_1134/data" \
+#      \
+#     --crop 12 140 12 140 20 148 \
+#     --split \
+#     --val_ratio  0.2 \
+#     --seed       42
 
-deactivate
-echo "==> Data formatting complete."
-echo ""
+# deactivate
+# echo "==> Data formatting complete."
+# echo ""
 # ── Step 2: Train ─────────────────────────────────────────────────────────────
 module load apptainer
 

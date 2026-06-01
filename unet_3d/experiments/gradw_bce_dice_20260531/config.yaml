@@ -10,7 +10,9 @@ model:
   num_groups: 8
 
 loss:
-  name: BCEDiceLoss
+  name: GradWeightedBCEDiceLoss
+  alpha: 1.0
+  beta: 5.0
 
 eval_metric:
   name: DiceCoefficient
@@ -29,12 +31,13 @@ lr_scheduler:
 
 trainer:
   eval_score_higher_is_better: true
-  checkpoint_dir: "/workspace/unet_3d/experiments/128_002_real_data_20260528_1134/checkpoint"
+  checkpoint_dir: "/workspace/unet_3d/experiments/gradw_bce_dice_20260531/checkpoint"
   resume: null
-  pre_trained: "/workspace/unet_3d/experiments/data_002_scratch_128_20260518_1315/checkpoint/last_checkpoint.pytorch"
+  # Warm-start from the converged BCEDice model to isolate the loss effect
+  pre_trained: "/workspace/unet_3d/experiments/128_002_real_data_20260528_1134/checkpoint/best_checkpoint.pytorch"
   validate_after_iters: 20
   log_after_iters: 20
-  max_num_epochs: 50
+  max_num_epochs: 25
   max_num_iterations: 2000000
 
 loaders:
