@@ -14,7 +14,7 @@ import torch
 import yaml
 import time
 import h5py
-from curobo_msgs.srv import GetVoxelGrid
+from curobo_msgs.msg import SparseVoxelGrid
 from std_srvs.srv import Trigger
 from pytorch3dunet.unet3d.model import get_model
 from pytorch3dunet.unet3d import utils
@@ -51,13 +51,6 @@ class ReachabilityNode(Node):
 
         # Declare save path for HDF5 export
         self.declare_parameter('save_map_path', '~/reachability_map.h5')
-
-        # Service client  /unified_planner/
-        self.voxel_client = self.create_client(GetVoxelGrid, '/unified_planner/get_voxel_grid')
-        while not self.voxel_client.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info('Voxel service not available, waiting...')
-
-        self.req = GetVoxelGrid.Request()
 
         # Publisher: WorkSpace message
         self.ws_pub = self.create_publisher(WorkSpace, '/reachability_map', 10)
@@ -165,50 +158,35 @@ class ReachabilityNode(Node):
         self._last_prediction_np = None  # float32 (nx,ny,nz), values 0-1
         self._last_vg_info = None        # dict: origin, resolution, size_x/y/z
 
-        # Timer - 0.1Hz for prediction and publishing pipeline
-        self.create_timer(10.0, self.call_voxel_service)  # 10Hz
+        self.create_subscription(
+            SparseVoxelGrid,
+            '/unified_planner/voxel_grid_sparse',
+            self.handle_sparse_voxel,
+            10,
+        )
+        self.get_logger().info('Subscribed to /unified_planner/voxel_grid_sparse')
 
     def _run_inference(self, x: torch.Tensor) -> torch.Tensor:
         if self.trt_model is not None:
             return self.trt_model.infer(x)
         return self.model(x)
 
-    def call_voxel_service(self):
-        """Call the voxel grid service and store latest voxel grid."""
-        future = self.voxel_client.call_async(self.req)
-        future.add_done_callback(self.handle_voxel_response)
-
-    def handle_voxel_response(self, future):
+    def handle_sparse_voxel(self, msg: SparseVoxelGrid):
         t_start = time.time()
 
-        try:
-            response = future.result()
-        except Exception as e:
-            self.get_logger().error(f"Service call failed: {e}")
-            return
+        # Reconstruct dense occupancy grid on GPU from sparse occupied indices.
+        # msg.occupied_indices: linear index = x * size_y * size_z + y * size_z + z
+        sx, sy, sz = msg.size_x, msg.size_y, msg.size_z
+        occ = torch.tensor(msg.occupied_indices, dtype=torch.long, device=self.device)
+        raw_gpu = torch.zeros(sx * sy * sz, dtype=torch.int32, device=self.device)
+        if occ.numel() > 0:
+            raw_gpu[occ] = 1
+        raw_gpu = raw_gpu.reshape(sx, sy, sz)
 
-        t_after_response = time.time()
+        t_after_scatter = time.time()
 
-        vg = response.voxel_grid
-        # frombuffer on a bytes object always yields a read-only array, and CUDA
-        # doesn't support uint32 arithmetic — reinterpret as int32 (same bit pattern
-        # for values 0/1) and copy once to get a writable buffer for torch.from_numpy.
-        voxel_map = np.frombuffer(bytes(vg.data), dtype=np.int32).reshape(
-            vg.size_x, vg.size_y, vg.size_z
-        ).copy()
-
-        # Crop to reshape 152 to 128
-        voxel_map = voxel_map[12:140, 12:140, 20:148]
-
-        t_after_conversion = time.time()
-
-        current_resolution = float(vg.resolutions.x)
+        current_resolution = float(msg.resolution)
         target_resolution = 0.02  # Target resolution expected by the model
-
-        # Transfer to GPU as int32 with a single copy, then do inversion/cast there.
-        # On Jetson (unified memory) this still copies due to CUDA cache attributes,
-        # but we avoid multiple CPU-side intermediate allocations.
-        raw_gpu = torch.from_numpy(voxel_map).to(self.device, non_blocking=True)
 
         dtype = torch.float16 if self.use_fp16 else torch.float32
         if abs(current_resolution - target_resolution) > 1e-6:
@@ -222,7 +200,7 @@ class ReachabilityNode(Node):
             voxel_map_ts = (1 - raw_gpu).to(dtype).unsqueeze(0).unsqueeze(0)
 
         vg_info = {
-            'origin': vg.origin,
+            'origin': msg.origin,
             'resolution': target_resolution if abs(current_resolution - target_resolution) > 1e-6 else current_resolution,
             'size_x': 128,
             'size_y': 128,
@@ -353,9 +331,8 @@ class ReachabilityNode(Node):
         if self.log_control_timing or enable_control:
             timing_msg = (
                 f"Timing [ms]: "
-                f"Response: {(t_after_response - t_start)*1000:.1f} | "
-                f"Conversion: {(t_after_conversion - t_after_response)*1000:.1f} | "
-                f"Resize: {(t_after_resize - t_after_conversion)*1000:.1f} | "
+                f"Scatter: {(t_after_scatter - t_start)*1000:.1f} | "
+                f"Resize: {(t_after_resize - t_after_scatter)*1000:.1f} | "
                 f"GPU Xfer: {(t_after_gpu_transfer - t_after_resize)*1000:.1f} | "
             )
 

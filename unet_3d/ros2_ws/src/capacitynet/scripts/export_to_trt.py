@@ -40,7 +40,7 @@ def parse_args():
     p.add_argument('--config', default=DEFAULT_CONFIG)
     p.add_argument('--onnx', default=DEFAULT_ONNX)
     p.add_argument('--engine', default=DEFAULT_ENGINE)
-    p.add_argument('--spatial', type=int, default=152,
+    p.add_argument('--spatial', type=int, default=128,
                    help='Spatial dimension (cubic). Must match deployment voxel grid size.')
     p.add_argument('--no-trtexec', action='store_true',
                    help='Only export ONNX, skip TensorRT compilation')
