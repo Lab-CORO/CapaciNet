@@ -3,16 +3,26 @@
 Val files : 35
 Voxels    : 122,913,280
 
--- Regression --
+-- Regression (continuous) --
 MAE       : 0.015059
 RMSE      : 0.054954
 Pearson r : 0.973899
 
--- Classification (threshold 0.5) --
-TP: 17,943,055   FP: 644,062
-FN: 927,109   TN: 103,399,054
-Precision : 0.9653
-Recall    : 0.9509
-F1        : 0.9581
-IoU       : 0.9195
-Accuracy  : 0.9872
+-- Classification (51 classes, 0-50; class = round(value*50)) --
+Exact accuracy   : 0.7801
+Within-+-1 acc.  : 0.8770
+Within-+-2 acc.  : 0.9252
+Within-+-10 acc. : 0.9850
+Within-+-20 acc. : 0.9944
+Mean class error : 0.7453  (orientation steps)
+RMSE (class)     : 2.7522
+Quadratic kappa  : 0.9837
+
+-- Per-region classification (background excluded) --
+region           voxels   exact    +-1    +-2   +-10   +-20  meanErr   rmse    QWK
+reachable    31,427,175   0.238  0.591  0.770  0.976  0.993    2.018   3.68  0.975
+graded       28,718,423   0.226  0.567  0.753  0.975  0.992    2.105   3.76  0.972
+thin          1,201,261   0.157  0.429  0.627  0.958  0.992    2.865   4.61  0.896
+  reachable: class >= 1 (non-empty)
+  graded: 1..49 (transition shell)
+  thin: top-1% |grad(label)| (edges/singularity lines)

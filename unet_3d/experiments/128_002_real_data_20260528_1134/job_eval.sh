@@ -18,8 +18,7 @@ python /lustre06/project/6089348/willore/CapaciNet/unet_3d/script/evaluate.py \
     --config     /lustre06/project/6089348/willore/CapaciNet/unet_3d/experiments/128_002_real_data_20260528_1134/config.yaml \
     --checkpoint /lustre06/project/6089348/willore/CapaciNet/unet_3d/experiments/128_002_real_data_20260528_1134/checkpoint/best_checkpoint.pytorch \
     --output_dir /lustre06/project/6089348/willore/CapaciNet/unet_3d/experiments/128_002_real_data_20260528_1134/evaluation \
-    --val_dir    /lustre06/project/6089348/willore/CapaciNet/unet_3d/experiments/128_002_real_data_20260528_1134/data/val \
-    --threshold  0.5
+    --val_dir    /lustre06/project/6089348/willore/CapaciNet/unet_3d/experiments/128_002_real_data_20260528_1134/data/val
 
 deactivate
 echo "==> Evaluation complete: 128_002_real_data_20260528_1134"

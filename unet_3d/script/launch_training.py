@@ -1024,7 +1024,6 @@ def generate_evaluation_report(exp):
 
     evaluate_host = os.path.join(UNET3D_DIR, "script", "evaluate.py")
 
-    threshold = prompt("  Binarization threshold", default=0.5, cast=float)
     time_limit = prompt("  Time limit (HH:MM:SS)", default="2:00:00")
 
     # Resolve val directory: prefer <exp>/data/val if it exists locally,
@@ -1058,9 +1057,9 @@ def generate_evaluation_report(exp):
 #SBATCH --output={logs_dir}/slurm_eval_%j.out
 #SBATCH --error={logs_dir}/slurm_eval_%j.err
 #SBATCH --time={time_limit}
-#SBATCH --mem-per-cpu=30G
+#SBATCH --mem-per-cpu=10G
 #SBATCH --gpus-per-node=1
-#SBATCH --cpus-per-task=2
+#SBATCH --cpus-per-task=1
 #SBATCH --export=ALL,DISABLE_DCGM=1
 
 set -e
@@ -1072,8 +1071,7 @@ python {evaluate_host} \\
     --config     {config_host} \\
     --checkpoint {best_ckpt_host} \\
     --output_dir {output_host} \\
-    --val_dir    {val_dir_host} \\
-    --threshold  {threshold}
+    --val_dir    {val_dir_host}
 
 deactivate
 echo "==> Evaluation complete: {exp_name}"

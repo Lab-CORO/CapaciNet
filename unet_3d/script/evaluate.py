@@ -60,17 +60,19 @@ def normalize(arr):
 
 
 def predict_file(model, device, filepath):
+    """Return (pred, label, raw) as 3D float32 volumes (shape preserved for region masks)."""
     with h5py.File(filepath, "r") as f:
         raw   = f["raw"][:]
         label = f["label"][:]
 
-    raw_norm = normalize(raw.astype(np.float32))
+    raw_f = raw.astype(np.float32)
+    raw_norm = normalize(raw_f)
     tensor   = torch.from_numpy(raw_norm[np.newaxis, np.newaxis]).to(device)
 
     with torch.no_grad():
-        pred = model(tensor).squeeze().cpu().numpy()
+        pred = model(tensor).squeeze().cpu().numpy().astype(np.float32)
 
-    return pred.ravel(), label.ravel().astype(np.float32)
+    return pred, label.astype(np.float32), raw_f
 
 
 N_CLASSES = 51  # reachability index is a fraction of 50 -> classes 0..50
@@ -84,6 +86,31 @@ def to_classes(arr):
     mode), but clip guards any tiny over/undershoot.
     """
     return np.clip(np.rint(arr * 50.0), 0, 50).astype(np.int16)
+
+
+def gradmag3d(a):
+    """Per-voxel gradient magnitude of a 3D array (for locating sharp/thin edges)."""
+    gx, gy, gz = np.gradient(a.astype(np.float32))
+    return np.sqrt(gx ** 2 + gy ** 2 + gz ** 2)
+
+
+def region_masks(label_cls, label_cont, grad_pct=99.0):
+    """Boolean masks (same shape as the volume) isolating where the model's job is
+    actually hard. Aggregates dominated by empty background hide these.
+
+      reachable : class >= 1            (any non-empty voxel)
+      graded    : 1 <= class <= 49      (transition shell: not empty, not saturated)
+      thin      : top-1% |grad(label)|  (sharp boundaries / singularity lines)
+    """
+    reachable = label_cls >= 1
+    graded    = (label_cls >= 1) & (label_cls <= 49)
+    gl = gradmag3d(label_cont)
+    if reachable.any():
+        thr = np.quantile(gl, grad_pct / 100.0)
+        thin = gl >= thr
+    else:
+        thin = np.zeros_like(reachable)
+    return {"reachable": reachable, "graded": graded, "thin": thin}
 
 
 # =============================================================================
@@ -128,9 +155,11 @@ def multiclass_metrics(pred_cls, label_cls, n_classes=N_CLASSES):
     diff = np.abs(pred_cls.astype(np.int32) - label_cls.astype(np.int32))
     n = diff.size
 
-    exact   = float(np.mean(diff == 0))
-    within1 = float(np.mean(diff <= 1))
-    within2 = float(np.mean(diff <= 2))
+    exact    = float(np.mean(diff == 0))
+    within1  = float(np.mean(diff <= 1))
+    within2  = float(np.mean(diff <= 2))
+    within10 = float(np.mean(diff <= 10))
+    within20 = float(np.mean(diff <= 20))
     mace    = float(np.mean(diff))          # mean absolute class error (orientation steps)
     medce   = float(np.median(diff))
     rmsece  = float(np.sqrt(np.mean(diff.astype(np.float64) ** 2)))
@@ -142,6 +171,8 @@ def multiclass_metrics(pred_cls, label_cls, n_classes=N_CLASSES):
         "ExactAccuracy": exact,
         "Within1Accuracy": within1,
         "Within2Accuracy": within2,
+        "Within10Accuracy": within10,
+        "Within20Accuracy": within20,
         "MeanClassError": mace,
         "MedianClassError": medce,
         "RMSEClass": rmsece,
@@ -165,9 +196,11 @@ def merge_class_metrics(cm, n_voxels):
     if total == 0:
         total = 1.0
 
-    exact   = float(np.trace(counts) / total)
-    within1 = float(counts[diff <= 1].sum() / total)
-    within2 = float(counts[diff <= 2].sum() / total)
+    exact    = float(np.trace(counts) / total)
+    within1  = float(counts[diff <= 1].sum() / total)
+    within2  = float(counts[diff <= 2].sum() / total)
+    within10 = float(counts[diff <= 10].sum() / total)
+    within20 = float(counts[diff <= 20].sum() / total)
     mace    = float((counts * diff).sum() / total)
     rmsece  = float(np.sqrt((counts * diff.astype(np.float64) ** 2).sum() / total))
 
@@ -175,6 +208,8 @@ def merge_class_metrics(cm, n_voxels):
         "ExactAccuracy": exact,
         "Within1Accuracy": within1,
         "Within2Accuracy": within2,
+        "Within10Accuracy": within10,
+        "Within20Accuracy": within20,
         "MeanClassError": mace,
         "MedianClassError": float("nan"),  # not recoverable from the matrix
         "RMSEClass": rmsece,
@@ -216,6 +251,60 @@ def plot_confusion_matrix(cls_metrics, output_path):
     plt.close()
 
 
+def error_cdf_from_cm(cm):
+    """From a confusion matrix, return cdf[k] = fraction of voxels with
+    |pred - label| <= k  (k = 0..n_classes-1). cdf[0] is the exact accuracy."""
+    n = cm.shape[0]
+    i = np.arange(n)
+    dist = np.abs(i[:, None] - i[None, :]).ravel()
+    counts = np.bincount(dist, weights=cm.ravel().astype(np.float64), minlength=n)
+    total = counts.sum()
+    return np.cumsum(counts) / (total if total > 0 else 1.0)
+
+
+def plot_tolerance_curves(region_cm, region_n, output_path, thresh=0.95, kmax=15,
+                          global_cm=None, global_n=None, ymin=0.1):
+    """Cumulative accuracy vs tolerance: fraction of voxels within +-k classes,
+    one curve per region (+ optional global). Marks where each curve first
+    reaches `thresh` (95%)."""
+    if not _HAS_MATPLOTLIB:
+        return
+    colors = {"global": "tab:green", "reachable": "tab:blue",
+              "graded": "tab:orange", "thin": "tab:red"}
+    ks = np.arange(0, kmax + 1)
+
+    # global first (so it draws underneath the region curves), then the regions
+    series = []
+    if global_cm is not None:
+        series.append(("global", global_cm, global_n))
+    series += [(r, region_cm[r], region_n[r]) for r in region_cm]
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    for r, cm, n in series:
+        cdf = error_cdf_from_cm(cm)
+        k95 = int(np.argmax(cdf >= thresh)) if (cdf >= thresh).any() else None
+        n0 = int(round(cdf[0] * n)) if n else 0   # exact-correct voxel count
+        style = dict(marker="o", ms=3, color=colors.get(r))
+        if r == "global":
+            style.update(ls="--", lw=1.3, alpha=0.8)   # dashed to set it apart
+        lbl = (f"{r}: exact={cdf[0]:.3f} ({n0:,} vox)"
+               + (f", {thresh:.0%} at ±{k95}" if k95 is not None else f", <{thresh:.0%}"))
+        ax.plot(ks, cdf[:kmax + 1], label=lbl, **style)
+        if k95 is not None and k95 <= kmax:
+            ax.axvline(k95, color=colors.get(r), ls=":", lw=0.9, alpha=0.6)
+
+    ax.axhline(thresh, color="k", ls="--", lw=1, alpha=0.7)
+    ax.set_xlabel("tolerance  ±k classes   (|pred − label| ≤ k)")
+    ax.set_ylabel("fraction of voxels within tolerance")
+    ax.set_title("Cumulative accuracy vs tolerance, by region")
+    ax.set_xlim(0, kmax); ax.set_ylim(ymin, 1.01)
+    ax.set_xticks(np.arange(0, kmax + 1, 1))
+    ax.grid(alpha=0.3); ax.legend(loc="lower right", fontsize=9)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150)
+    plt.close()
+
+
 def plot_error_histogram(preds, labels, output_path):
     if not _HAS_MATPLOTLIB:
         return
@@ -231,6 +320,56 @@ def plot_error_histogram(preds, labels, output_path):
     plt.tight_layout()
     plt.savefig(output_path, dpi=150)
     plt.close()
+
+
+def plot_region_slices(samples, output_dir):
+    """For each (pred, label, raw) sample, save a regions_N.png showing:
+      col 0: raw input (binary obstacle occupancy, 0/1)
+      col 1: label where reachable (class>=1), black outside
+      col 2: label where graded (class 1-49), black outside
+      col 3: label where thin (top-1% |grad(label)|), black outside
+
+    Uses the X-axis slice with the most thin-region voxels (singularity plane).
+    """
+    if not _HAS_MATPLOTLIB:
+        return
+    col_titles = ["raw input\n(obstacles)", "reachable\n(class ≥ 1)",
+                  "graded\n(class 1–49)", "thin\n(top 1% |∇label|)"]
+    for n, (pred, label, raw) in enumerate(samples):
+        label_cls = to_classes(label)
+        masks = region_masks(label_cls, label)
+
+        # pick X slice with most thin-region voxels (singularity plane)
+        thin_per_x = masks["thin"].sum(axis=(1, 2))
+        xc = int(np.argmax(thin_per_x)) if thin_per_x.max() > 0 else label.shape[0] // 2
+
+        raw_sl   = np.rot90(raw[xc, :, :])
+        label_sl = np.rot90(label[xc, :, :])
+        mask_sls = {r: np.rot90(masks[r][xc, :, :]) for r in ["reachable", "graded", "thin"]}
+
+        fig, axs = plt.subplots(2, 2, figsize=(10, 10))
+        axs_flat = axs.flatten()   # [top-left, top-right, bottom-left, bottom-right]
+
+        # top-left: raw input — binary occupancy (0 or 1), hot colormap
+        axs_flat[0].imshow(raw_sl, cmap="hot", vmin=0, vmax=1)
+        axs_flat[0].set_title(col_titles[0]); axs_flat[0].axis("off")
+        n_obs = int((raw_sl > 0).sum())
+        axs_flat[0].set_xlabel(f"{n_obs} occupied voxels", fontsize=8)
+
+        # top-right + bottom row: label value inside region, white outside
+        cmap_region = plt.cm.gnuplot.copy(); cmap_region.set_bad("white")
+        for ax, r, title in zip(axs_flat[1:], ["reachable", "graded", "thin"], col_titles[1:]):
+            m = mask_sls[r]
+            img = np.where(m, label_sl.astype(np.float32), np.nan)
+            im = ax.imshow(img, cmap=cmap_region, vmin=0, vmax=1)
+            ax.set_title(title); ax.axis("off")
+            ax.set_xlabel(f"{int(m.sum())} voxels in slice", fontsize=8)
+            plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+        plt.suptitle(f"Sample {n}  —  X slice {xc}  (singularity plane)", fontsize=11)
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, f"regions_{n}.png"), dpi=150)
+        plt.close()
 
 
 # =============================================================================
@@ -251,12 +390,34 @@ def print_metrics(reg, cls):
     print(f"  Exact accuracy   : {cls['ExactAccuracy']:.4f}")
     print(f"  Within-±1 acc.   : {cls['Within1Accuracy']:.4f}")
     print(f"  Within-±2 acc.   : {cls['Within2Accuracy']:.4f}")
+    print(f"  Within-±10 acc.  : {cls['Within10Accuracy']:.4f}")
+    print(f"  Within-±20 acc.  : {cls['Within20Accuracy']:.4f}")
     print(f"  Mean class error : {cls['MeanClassError']:.4f}  (orientation steps)")
     print(f"  RMSE (class)     : {cls['RMSEClass']:.4f}")
     print(f"  Quadratic kappa  : {cls['QuadraticKappa']:.4f}")
 
 
-def save_report(reg, cls, output_path, n_files, n_voxels):
+_REGION_DESC = {
+    "reachable": "class >= 1 (non-empty)",
+    "graded":    "1..49 (transition shell)",
+    "thin":      "top-1% |grad(label)| (edges/singularity lines)",
+}
+
+
+def print_region_metrics(region_cls, region_n):
+    print(f"\n  -- Per-region classification (background excluded) --")
+    print(f"  {'region':<10} {'voxels':>12}  {'exact':>6} {'±1':>6} {'±2':>6} {'±10':>6} {'±20':>6} "
+          f"{'meanErr':>8} {'rmse':>6} {'QWK':>6}")
+    for r, m in region_cls.items():
+        print(f"  {r:<10} {region_n[r]:>12,}  "
+              f"{m['ExactAccuracy']:>6.3f} {m['Within1Accuracy']:>6.3f} "
+              f"{m['Within2Accuracy']:>6.3f} {m['Within10Accuracy']:>6.3f} "
+              f"{m['Within20Accuracy']:>6.3f} {m['MeanClassError']:>8.3f} "
+              f"{m['RMSEClass']:>6.2f} {m['QuadraticKappa']:>6.3f}")
+    print(f"     ({', '.join(f'{r}={_REGION_DESC[r]}' for r in region_cls)})")
+
+
+def save_report(reg, cls, output_path, n_files, n_voxels, region_cls=None, region_n=None):
     with open(output_path, "w") as f:
         f.write("=== CapaciNet Evaluation Report ===\n\n")
         f.write(f"Val files : {n_files}\n")
@@ -269,9 +430,23 @@ def save_report(reg, cls, output_path, n_files, n_voxels):
         f.write(f"Exact accuracy   : {cls['ExactAccuracy']:.4f}\n")
         f.write(f"Within-+-1 acc.  : {cls['Within1Accuracy']:.4f}\n")
         f.write(f"Within-+-2 acc.  : {cls['Within2Accuracy']:.4f}\n")
+        f.write(f"Within-+-10 acc. : {cls['Within10Accuracy']:.4f}\n")
+        f.write(f"Within-+-20 acc. : {cls['Within20Accuracy']:.4f}\n")
         f.write(f"Mean class error : {cls['MeanClassError']:.4f}  (orientation steps)\n")
         f.write(f"RMSE (class)     : {cls['RMSEClass']:.4f}\n")
         f.write(f"Quadratic kappa  : {cls['QuadraticKappa']:.4f}\n")
+        if region_cls:
+            f.write("\n-- Per-region classification (background excluded) --\n")
+            f.write(f"{'region':<10} {'voxels':>12}  {'exact':>6} {'+-1':>6} {'+-2':>6} {'+-10':>6} {'+-20':>6} "
+                    f"{'meanErr':>8} {'rmse':>6} {'QWK':>6}\n")
+            for r, m in region_cls.items():
+                f.write(f"{r:<10} {region_n[r]:>12,}  "
+                        f"{m['ExactAccuracy']:>6.3f} {m['Within1Accuracy']:>6.3f} "
+                        f"{m['Within2Accuracy']:>6.3f} {m['Within10Accuracy']:>6.3f} "
+                        f"{m['Within20Accuracy']:>6.3f} {m['MeanClassError']:>8.3f} "
+                        f"{m['RMSEClass']:>6.2f} {m['QuadraticKappa']:>6.3f}\n")
+            for r in region_cls:
+                f.write(f"  {r}: {_REGION_DESC[r]}\n")
 
 
 # =============================================================================
@@ -307,22 +482,33 @@ def main():
 
     all_preds, all_labels = [], []
     global_cm = np.zeros((N_CLASSES, N_CLASSES), dtype=np.int64)
-    per_file_rows = []
+    # per-region accumulated confusion matrices + voxel counts
+    region_names = ["reachable", "graded", "thin"]
+    region_cm = {r: np.zeros((N_CLASSES, N_CLASSES), dtype=np.int64) for r in region_names}
+    region_n  = {r: 0 for r in region_names}
+    region_samples = []   # first 3 (pred, label, raw) volumes for region_slices plot
 
     for i, fp in enumerate(val_files):
         fname = os.path.basename(fp)
-        preds, labels = predict_file(model, device, fp)
-        all_preds.append(preds)
-        all_labels.append(labels)
+        pred, label, raw = predict_file(model, device, fp)     # 3D volumes
+        all_preds.append(pred.ravel())
+        all_labels.append(label.ravel())
+        if i < 3:
+            region_samples.append((pred, label, raw))
 
         # First treatment: quantize pred + GT to integer classes 0..50.
-        pred_cls  = to_classes(preds)
-        label_cls = to_classes(labels)
+        pred_cls  = to_classes(pred)
+        label_cls = to_classes(label)
 
-        reg = regression_metrics(preds, labels)
-        cls = multiclass_metrics(pred_cls, label_cls)
+        reg = regression_metrics(pred.ravel(), label.ravel())
+        cls = multiclass_metrics(pred_cls.ravel(), label_cls.ravel())
         global_cm += cls["ConfusionMatrix"]
-        per_file_rows.append((fname, reg, cls))
+
+        # region-restricted confusion matrices (the hard, non-background voxels)
+        for r, m in region_masks(label_cls, label).items():
+            if m.any():
+                region_cm[r] += confusion_matrix(pred_cls[m], label_cls[m])
+                region_n[r]  += int(m.sum())
 
         print(f"  [{i+1:4d}/{len(val_files)}] {fname:<45} "
               f"MAE={reg['MAE']:.4f}  Exact={cls['ExactAccuracy']:.4f}  "
@@ -334,24 +520,35 @@ def main():
 
     global_reg = regression_metrics(all_preds, all_labels)
     global_cls = merge_class_metrics(global_cm, n_voxels=len(all_preds))
+    region_cls = {r: merge_class_metrics(region_cm[r], n_voxels=region_n[r]) for r in region_names}
 
     print_header("Global Results")
     print(f"  Val files : {len(val_files)}")
     print(f"  Voxels    : {len(all_preds):,}")
     print_metrics(global_reg, global_cls)
+    print_region_metrics(region_cls, region_n)
 
     # Save outputs
     plot_confusion_matrix(global_cls, os.path.join(args.output_dir, "confusion_matrix.png"))
     plot_error_histogram(all_preds, all_labels, os.path.join(args.output_dir, "error_histogram.png"))
+    plot_tolerance_curves(region_cm, region_n, os.path.join(args.output_dir, "tolerance_curve.png"),
+                          global_cm=global_cm, global_n=len(all_preds))
+    plot_region_slices(region_samples, args.output_dir)
+    np.savez_compressed(os.path.join(args.output_dir, "confusion_matrices.npz"),
+                        global_cm=global_cm, **{f"{r}_cm": region_cm[r] for r in region_names})
     save_report(global_reg, global_cls, os.path.join(args.output_dir, "report.txt"),
-                n_files=len(val_files), n_voxels=len(all_preds))
+                n_files=len(val_files), n_voxels=len(all_preds),
+                region_cls=region_cls, region_n=region_n)
 
     print(f"\n  Saved to: {args.output_dir}/")
     if _HAS_MATPLOTLIB:
         print(f"    confusion_matrix.png")
         print(f"    error_histogram.png")
+        print(f"    tolerance_curve.png")
+        print(f"    regions_0.png .. regions_{min(2, len(val_files)-1)}.png")
     else:
         print(f"    (plots skipped — matplotlib not available)")
+    print(f"    confusion_matrices.npz")
     print(f"    report.txt\n")
 
 

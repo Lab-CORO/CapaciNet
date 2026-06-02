@@ -1,18 +1,28 @@
 === CapaciNet Evaluation Report ===
 
-Val files : 14
-Voxels    : 29,360,128
+Val files : 13
+Voxels    : 27,262,976
 
--- Regression --
-MAE       : 0.027052
-RMSE      : 0.078826
-Pearson r : 0.980958
+-- Regression (continuous) --
+MAE       : 0.029119
+RMSE      : 0.081801
+Pearson r : 0.979252
 
--- Classification (threshold 0.5) --
-TP: 8,279,613   FP: 394,727
-FN: 344,842   TN: 20,340,946
-Precision : 0.9545
-Recall    : 0.9600
-F1        : 0.9572
-IoU       : 0.9180
-Accuracy  : 0.9748
+-- Classification (51 classes, 0-50; class = round(value*50)) --
+Exact accuracy   : 0.6092
+Within-+-1 acc.  : 0.7833
+Within-+-2 acc.  : 0.8648
+Within-+-10 acc. : 0.9688
+Within-+-20 acc. : 0.9869
+Mean class error : 1.4392  (orientation steps)
+RMSE (class)     : 4.0957
+Quadratic kappa  : 0.9779
+
+-- Per-region classification (background excluded) --
+region           voxels   exact    +-1    +-2   +-10   +-20  meanErr   rmse    QWK
+reachable    13,068,131   0.253  0.596  0.761  0.966  0.994    2.185   4.05  0.969
+graded       11,427,552   0.225  0.556  0.735  0.964  0.995    2.333   4.16  0.966
+thin            275,702   0.140  0.389  0.569  0.951  0.994    3.244   4.88  0.883
+  reachable: class >= 1 (non-empty)
+  graded: 1..49 (transition shell)
+  thin: top-1% |grad(label)| (edges/singularity lines)

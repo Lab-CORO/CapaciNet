@@ -18,8 +18,7 @@ python /lustre06/project/6089348/willore/CapaciNet/unet_3d/script/evaluate.py \
     --config     /lustre06/project/6089348/willore/CapaciNet/unet_3d/experiments/l1_smooth_20260326_1622/config.yaml \
     --checkpoint /lustre06/project/6089348/willore/CapaciNet/unet_3d/experiments/l1_smooth_20260326_1622/checkpoint/best_checkpoint.pytorch \
     --output_dir /lustre06/project/6089348/willore/CapaciNet/unet_3d/experiments/l1_smooth_20260326_1622/evaluation \
-    --val_dir    /lustre06/project/6089348/willore/CapaciNet/unet_3d/experiments/data_008/data/val \
-    --threshold  0.5
+    --val_dir    /lustre06/project/6089348/willore/CapaciNet/unet_3d/experiments/data_008/data/val
 
 deactivate
 echo "==> Evaluation complete: l1_smooth_20260326_1622"
