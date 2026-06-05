@@ -27,6 +27,9 @@ setup(
             'reachability_node=capacitynet.capacitynet:main',
             'gradient_controller_mock=capacitynet.gradient_controller_mock:main',
             'brain_orchestrator=capacitynet.brain_orchestrator:main',
+            'replay_maps=capacitynet.replay_maps:main',
+            'metrics_recorder=capacitynet.metrics_recorder:main',
+            'plot_metrics=capacitynet.plot_metrics:main',
         ],
     },
 )

@@ -7,6 +7,7 @@
 # # Verify with this: echo $PYTHONPATH
 
 import os
+from datetime import datetime
 import rclpy
 from rclpy.node import Node
 import numpy as np
@@ -14,7 +15,7 @@ import torch
 import yaml
 import time
 import h5py
-from curobo_msgs.msg import SparseVoxelGrid
+from curobo_msgs.msg import SparseVoxelGrid, ReachabilityMetrics
 from std_srvs.srv import Trigger
 from pytorch3dunet.unet3d.model import get_model
 from pytorch3dunet.unet3d import utils
@@ -52,8 +53,31 @@ class ReachabilityNode(Node):
         # Declare save path for HDF5 export
         self.declare_parameter('save_map_path', '~/reachability_map.h5')
 
+        # Continuous save parameters
+        self.declare_parameter('continuous_save', False)
+        self.declare_parameter('save_replay_path', '')  # empty = auto-generate
+
+        # Resolve replay path once at startup so the filename stays stable
+        replay_path = self.get_parameter('save_replay_path').value
+        if not replay_path:
+            ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+            replay_path = os.path.expanduser(
+                f'~/ros2_ws/src/capacitynet/results/reach_{ts}.h5'
+            )
+        else:
+            replay_path = os.path.expanduser(replay_path)
+        os.makedirs(os.path.dirname(replay_path), exist_ok=True)
+        self._replay_path = replay_path
+        self._save_counter = 0
+        self.get_logger().info(f'Replay save path: {self._replay_path}')
+
         # Publisher: WorkSpace message
         self.ws_pub = self.create_publisher(WorkSpace, '/reachability_map', 10)
+
+        # Publisher: per-frame timing metrics
+        self.metrics_pub = self.create_publisher(
+            ReachabilityMetrics, '/reachability_node/metrics', 10)
+        self._metrics_frame_counter = 0
 
         # Service: save latest inference result to HDF5
         self.save_map_srv = self.create_service(
@@ -186,25 +210,19 @@ class ReachabilityNode(Node):
         t_after_scatter = time.time()
 
         current_resolution = float(msg.resolution)
-        target_resolution = 0.02  # Target resolution expected by the model
 
+        # The producer emits a fixed 128³ grid at 0.02 m/voxel (see plan_new_voxel_grid.md),
+        # which already matches the model's expected input — no resampling needed.
+        # Invert occupancy (1=free, 0=occupied), cast, and add batch/channel dims.
         dtype = torch.float16 if self.use_fp16 else torch.float32
-        if abs(current_resolution - target_resolution) > 1e-6:
-            # Invert occupancy, cast, and resize the already-cropped 128³ tensor to 128³
-            voxel_map_ts = torch.nn.functional.interpolate(
-                (1 - raw_gpu).to(dtype).unsqueeze(0).unsqueeze(0),
-                size=(128, 128, 128),
-                mode='nearest',
-            )
-        else:
-            voxel_map_ts = (1 - raw_gpu).to(dtype).unsqueeze(0).unsqueeze(0)
+        voxel_map_ts = (1 - raw_gpu).to(dtype).unsqueeze(0).unsqueeze(0)
 
         vg_info = {
             'origin': msg.origin,
-            'resolution': target_resolution if abs(current_resolution - target_resolution) > 1e-6 else current_resolution,
-            'size_x': 128,
-            'size_y': 128,
-            'size_z': 128,
+            'resolution': current_resolution,
+            'size_x': sx,
+            'size_y': sy,
+            'size_z': sz,
         }
 
         t_after_resize = time.time()
@@ -299,6 +317,14 @@ class ReachabilityNode(Node):
         self._last_voxel_grid_np = voxel_map_ts.squeeze().float().cpu().numpy()
         self._last_vg_info = vg_info
 
+        # Continuous save: append each result as a new HDF5 group
+        if self.get_parameter('continuous_save').value:
+            try:
+                self._append_to_hdf5(self._replay_path, self._save_counter)
+                self._save_counter += 1
+            except Exception as e:
+                self.get_logger().error(f'Continuous save failed: {e}')
+
         # Convert center RM to CPU for publishing
         if self.use_fp16:
             prediction_cpu = prediction_center.float().cpu().numpy()
@@ -326,6 +352,21 @@ class ReachabilityNode(Node):
         del raw_gpu
 
         t_end = time.time()
+
+        # Publish structured metrics (single inference mode — gradient OFF path)
+        if not enable_control:
+            m = ReachabilityMetrics()
+            m.header.stamp = self.get_clock().now().to_msg()
+            m.frame_id = self._metrics_frame_counter
+            m.t_scatter_ms = (t_after_scatter - t_start) * 1000.0
+            m.t_resize_ms = (t_after_resize - t_after_scatter) * 1000.0
+            m.t_gpu_sync_ms = (t_after_gpu_transfer - t_after_resize) * 1000.0
+            m.t_prediction_ms = (t_after_prediction - t_after_gpu_transfer) * 1000.0
+            m.t_cpu_transfer_ms = (t_after_cpu_transfer - t_after_prediction) * 1000.0
+            m.t_total_ms = (t_end - t_start) * 1000.0
+            m.fps = 1000.0 / m.t_total_ms if m.t_total_ms > 0 else 0.0
+            self.metrics_pub.publish(m)
+            self._metrics_frame_counter += 1
 
         # Enhanced timing log
         if self.log_control_timing or enable_control:
@@ -439,6 +480,38 @@ class ReachabilityNode(Node):
                 ds.attrs['voxel_grid_size_x'] = float(nx)
                 ds.attrs['voxel_grid_size_y'] = float(ny)
                 ds.attrs['voxel_grid_size_z'] = float(nz)
+
+    def _append_to_hdf5(self, path: str, index: int) -> None:
+        """Append the latest reachability map as a new group /group/{index} in the HDF5 file.
+
+        Opens in append mode so previous groups are preserved.
+        """
+        pred = self._last_prediction_np.astype(np.float64)
+        vg = self._last_voxel_grid_np.astype(np.float64)
+        info = self._last_vg_info
+        res = float(info['resolution'])
+        ox = float(info['origin'].x)
+        oy = float(info['origin'].y)
+        oz = float(info['origin'].z)
+        nx, ny, nz = pred.shape
+
+        with h5py.File(path, 'a') as f:
+            grp = f.require_group(f'/group/{index}')
+            for name, data in [('reachability_map', pred), ('voxel_grid', vg)]:
+                if name in grp:
+                    del grp[name]
+                ds = grp.create_dataset(name, data=data)
+                ds.attrs['voxel_size'] = res
+                ds.attrs['origine_x'] = ox
+                ds.attrs['origine_y'] = oy
+                ds.attrs['origine_z'] = oz
+                ds.attrs['voxel_grid_size_x'] = float(nx)
+                ds.attrs['voxel_grid_size_y'] = float(ny)
+                ds.attrs['voxel_grid_size_z'] = float(nz)
+
+        self.get_logger().debug(
+            f'Appended group /group/{index} to {path}'
+        )
 
     def handle_save_map(self, request, response):
         if self._last_prediction_np is None:

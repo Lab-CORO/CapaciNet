@@ -168,7 +168,7 @@ def build_int8_engine(onnx_path: str, engine_path: str, cache_path: str,
     profile = builder.create_optimization_profile()
     shape_min = (1, 1, spatial, spatial, spatial)
     shape_max = (max_batch, 1, spatial, spatial, spatial)
-    profile.set_shape('input', shape_min, shape_max, shape_max)
+    profile.set_shape('input', shape_min, shape_min, shape_max)
     config.add_optimization_profile(profile)
 
     print(f'[2/3] Running INT8 calibration ({len(h5_files)} samples)...')
