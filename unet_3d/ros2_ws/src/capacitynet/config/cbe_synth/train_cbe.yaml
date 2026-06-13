@@ -1,0 +1,90 @@
+manual_seed: 42
+
+# Goal: BatchNorm-based model (foldable into Conv at TRT inference) WITHOUT losing the
+# global radial context that the reachability field needs.
+# Evidence: cbe_64patch (64^3 patches) got stuck at train Dice 0.797 -- a 64^3 patch can't
+# locate itself relative to the robot base, so it predicts the blurry mean.
+# data_002_scratch_128 (128^3, gcr) reached train Dice 0.999 / val 0.937 in 9 epochs.
+# -> This config = the proven scratch_128 setup, swapping gcr -> cbe and batch 1 -> 4.
+
+model:
+  name: UNet3D
+  in_channels: 1
+  out_channels: 1
+  final_sigmoid: true
+  f_maps: [16, 32, 64, 128, 256]
+  layer_order: cbe          # Conv -> BatchNorm -> ELU. BatchNorm folds into Conv at TRT
+                             # inference -> removes the reformatting CopyNodes (~6-7 ms each).
+                             # Stable here: each 128^3 sample gives ~2M spatial locations/channel,
+                             # so batch 4 of full volumes yields solid BN statistics.
+
+loss:
+  name: BCEDiceLoss
+
+eval_metric:
+  name: DiceCoefficient
+
+optimizer:
+  learning_rate: 5.0e-05    # Proven at 128^3 from scratch (scratch_128 hit Dice 0.999 in 9 epochs).
+                             # Bump to 1e-4 if convergence looks slow with the new norm/batch.
+  weight_decay: 1.0e-05
+
+lr_scheduler:
+  name: ReduceLROnPlateau
+  mode: max
+  factor: 0.5
+  patience: 50
+  cooldown: 10
+  min_lr: 1.0e-08
+
+trainer:
+  eval_score_higher_is_better: true
+  checkpoint_dir: "/workspace/unet_3d/experiments/cbe_128_batch4_20260604/checkpoint"
+  resume: null
+  pre_trained: null         # Cannot warm-start from gcr checkpoint (BatchNorm != GroupNorm weights)
+  validate_after_iters: 2000   # val set = 1960 files (~1.8 min/validation)
+  log_after_iters: 50
+  max_num_epochs: 200
+  max_num_iterations: 2000000
+
+loaders:
+  dataset: LazyHDF5Dataset  # 7493 train files won't fit in RAM if eager-loaded (scratch_128 needed
+                             # 500G); lazy reads each 128^3 volume from disk -> low RAM, fork-safe.
+  batch_size: 4             # full 128^3 volumes; batch 4 -> stable BatchNorm, fits A100 40GB
+                             # (~6-10 GB activations). Drop to 2 if it OOMs on the GPU.
+  num_workers: 4
+  raw_internal_path: raw
+  label_internal_path: label
+
+  train:
+    file_paths: ["/workspace/unet_3d/data_002/train"]
+    slice_builder:
+      name: SliceBuilder
+      patch_shape: [128, 128, 128]  # full volume -> preserves global radial context (the fix)
+      stride_shape: [128, 128, 128]  # 1 patch/file -> 7493 patches/epoch -> ~1873 iters/epoch at batch 4
+    transformer:
+      raw:
+        - name: Normalize
+        - name: ToTensor
+          expand_dims: true
+      label:
+        - name: Identity
+        - name: ToTensor
+          expand_dims: true
+
+  val:
+    file_paths: ["/workspace/unet_3d/data_002/val"]
+    slice_builder:
+      name: SliceBuilder
+      patch_shape: [128, 128, 128]
+      stride_shape: [128, 128, 128]
+    transformer:
+      raw:
+        - name: Normalize
+        - name: ToTensor
+          expand_dims: true
+      label:
+        - name: Identity
+        - name: ToTensor
+          expand_dims: true
+

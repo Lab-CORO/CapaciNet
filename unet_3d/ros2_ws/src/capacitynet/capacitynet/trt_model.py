@@ -107,13 +107,16 @@ class TRTModel:
     def _infer_single(self, x: torch.Tensor) -> torch.Tensor:
         """Run one TRT forward pass. x must fit within max_batch."""
         if x.shape[0] == 1 and self._cuda_graph is not None:
-            # copy_ on _graph_stream ensures it finishes before replay reads input.
-            with torch.cuda.stream(self._graph_stream):
-                self._graph_input_buf.copy_(x)
-            # replay() runs on the capture stream (_graph_stream).
+            # copy_, replay() and clone() must all run on the SAME stream so they
+            # execute strictly in order. The previous version copied the input on a
+            # dedicated stream but replayed on the current stream with no sync, so
+            # replay() raced the copy and read the STALE input buffer on ~half the
+            # calls (e.g. last frame / zeros warmup) -> intermittently wrong output.
+            # Running everything on the current stream serialises copy -> replay ->
+            # read with no race. A graph captured on _graph_stream may be replayed
+            # on any stream.
+            self._graph_input_buf.copy_(x)
             self._cuda_graph.replay()
-            # Inject dependency so default stream waits before clone() reads output.
-            torch.cuda.current_stream().wait_stream(self._graph_stream)
             return self._graph_output_buf.clone()
 
         # Fallback: dynamic batch or graph not yet captured.

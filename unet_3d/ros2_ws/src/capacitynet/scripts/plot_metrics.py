@@ -232,14 +232,24 @@ def main():
                         help='Reference FPS budget line (default: 10)')
     parser.add_argument('--show', action='store_true',
                         help='Display the figure interactively (requires a display)')
+    parser.add_argument('--max-samples', type=int, default=100,
+                        help='Use only the first N rows (default: 100). '
+                             'Set to 0 to use all data.')
     args = parser.parse_args()
 
     data = _load_csv(args.csv)
 
-    n_frames = len(data.get('t_total_ms', []))
-    if n_frames == 0:
+    n_total = len(data.get('t_total_ms', []))
+    if n_total == 0:
         sys.exit('No data rows found in CSV.')
-    print(f'Loaded {n_frames} frames from {args.csv}')
+
+    n_frames = n_total
+    if args.max_samples > 0 and n_total > args.max_samples:
+        data = {k: v[:args.max_samples] for k, v in data.items()}
+        n_frames = args.max_samples
+        print(f'Loaded {n_total} frames, using first {n_frames} (--max-samples {args.max_samples})')
+    else:
+        print(f'Loaded {n_frames} frames from {args.csv}')
 
     fig = build_figure(data, args.target_fps)
 
@@ -257,6 +267,7 @@ def main():
     print(
         f'\n--- Summary ({n_frames} frames) ---\n'
         f'  Total latency  mean={np.nanmean(total):.1f} ms  '
+        f'std={np.nanstd(total):.1f}  '
         f'p50={np.nanpercentile(total,50):.1f}  '
         f'p95={np.nanpercentile(total,95):.1f}  '
         f'p99={np.nanpercentile(total,99):.1f}\n'
@@ -266,7 +277,8 @@ def main():
     )
     for s in _STAGES:
         if s in data:
-            print(f'  {_STAGE_LABELS[s]:<15} mean={np.nanmean(data[s]):.1f} ms')
+            print(f'  {_STAGE_LABELS[s]:<15} mean={np.nanmean(data[s]):.1f} ms  '
+                  f'std={np.nanstd(data[s]):.1f}')
 
 
 if __name__ == '__main__':
