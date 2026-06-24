@@ -480,6 +480,39 @@ def plot_region_slices(samples, output_dir, slice_axis='x', slice_idx=None):
         plt.close()
 
 
+def plot_obstacle_scatter(n_obstacles, mae_per_file, rmse_per_file, output_path):
+    """Scatter plots of MAE and RMSE vs number of occupied voxels per scene."""
+    if not _HAS_MATPLOTLIB:
+        return
+    n_obs = np.array(n_obstacles)
+    mae   = np.array(mae_per_file)
+    rmse  = np.array(rmse_per_file)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+
+    for ax, values, ylabel, color in [
+        (ax1, mae,  "MAE",  "steelblue"),
+        (ax2, rmse, "RMSE", "darkorange"),
+    ]:
+        ax.scatter(n_obs, values, s=18, alpha=0.7, color=color, edgecolors="none")
+        # simple linear trend
+        if len(n_obs) > 1:
+            coeffs = np.polyfit(n_obs, values, 1)
+            x_line = np.array([n_obs.min(), n_obs.max()])
+            ax.plot(x_line, np.polyval(coeffs, x_line),
+                    color="black", linewidth=1, linestyle="--", alpha=0.6,
+                    label=f"trend  slope={coeffs[0]:.2e}")
+            ax.legend(fontsize=8)
+        ax.set_xlabel("occupied voxels (obstacles) in scene")
+        ax.set_ylabel(ylabel)
+        ax.set_title(f"{ylabel} vs obstacle count  (n={len(n_obs)} scenes)")
+        ax.grid(alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150)
+    plt.close()
+
+
 # =============================================================================
 #  REPORT
 # =============================================================================
@@ -548,7 +581,8 @@ def print_region_regression_metrics(region_reg, region_reg_stats=None):
 
 
 def save_report(reg, cls, output_path, n_files, n_voxels, region_cls=None, region_n=None,
-                region_reg=None, global_reg_stats=None, region_reg_stats=None, backend=None):
+                region_reg=None, global_reg_stats=None, region_reg_stats=None, backend=None,
+                global_reg_per_file=None, n_obstacles_per_file=None, filenames_per_file=None):
     def _fmt_stat(stats, key):
         if stats and key in stats:
             return f"  mean={stats[key][0]:.6f}  std={stats[key][1]:.6f}"
@@ -597,6 +631,19 @@ def save_report(reg, cls, output_path, n_files, n_voxels, region_cls=None, regio
                         f"{m['RMSEClass']:>6.2f} {m['QuadraticKappa']:>6.3f}\n")
             for r in region_cls:
                 f.write(f"  {r}: {_REGION_DESC[r]}\n")
+        if global_reg_per_file and filenames_per_file:
+            n_worst = max(1, int(len(global_reg_per_file) * 0.05))
+            mae_vals  = [d['MAE']  for d in global_reg_per_file]
+            rmse_vals = [d['RMSE'] for d in global_reg_per_file]
+            n_obs = n_obstacles_per_file or [None] * len(global_reg_per_file)
+            header = f"{'filename':<50} {'MAE':>9} {'RMSE':>9} {'obstacles':>10}\n"
+            for label, order_key in [("MAE", mae_vals), ("RMSE", rmse_vals)]:
+                worst = sorted(range(len(order_key)), key=lambda i: order_key[i], reverse=True)[:n_worst]
+                f.write(f"\n-- Worst {n_worst} scenes ({5}%) by {label} --\n")
+                f.write(header)
+                for i in worst:
+                    obs = f"{n_obs[i]:>10,}" if n_obs[i] is not None else f"{'N/A':>10}"
+                    f.write(f"{filenames_per_file[i]:<50} {mae_vals[i]:>9.6f} {rmse_vals[i]:>9.6f} {obs}\n")
 
 
 # =============================================================================
@@ -606,7 +653,8 @@ def save_report(reg, cls, output_path, n_files, n_voxels, region_cls=None, regio
 def _save_extended_npz(path, global_cm, region_cm, region_n, n_files, n_voxels,
                        global_reg, global_reg_per_file,
                        region_reg, region_reg_per_file,
-                       region_samples, all_preds, all_labels, backend):
+                       region_samples, all_preds, all_labels, backend,
+                       n_obstacles_per_file=None, filenames_per_file=None):
     """Save everything needed to regenerate all outputs without re-running inference."""
     region_names = list(region_cm.keys())
     errors = np.abs(all_preds - all_labels).astype(np.float32)
@@ -627,6 +675,10 @@ def _save_extended_npz(path, global_cm, region_cm, region_n, n_files, n_voxels,
         global_pearson_pf=np.array([d['Pearson_r'] for d in global_reg_per_file]),
         backend=np.array(backend),
     )
+    if n_obstacles_per_file is not None:
+        arrays['n_obstacles_pf'] = np.array(n_obstacles_per_file, dtype=np.int64)
+    if filenames_per_file is not None:
+        arrays['filenames_pf'] = np.array(filenames_per_file, dtype=str)
     for r in region_names:
         arrays[f"{r}_cm"] = region_cm[r]
         arrays[f"{r}_n"]  = np.array(region_n[r])
@@ -701,11 +753,19 @@ def _load_from_npz(path):
                                 d[f"sample_{i}_raw"]))
 
     region_cm = {r: d[f"{r}_cm"] for r in region_names}
+    n_obstacles_pf = d['n_obstacles_pf'].tolist() if 'n_obstacles_pf' in d else None
+    filenames_pf   = d['filenames_pf'].tolist()   if 'filenames_pf'   in d else None
+    global_reg_per_file = [
+        {'MAE': float(d['global_mae_pf'][i]),
+         'RMSE': float(d['global_rmse_pf'][i]),
+         'Pearson_r': float(d['global_pearson_pf'][i])}
+        for i in range(len(d['global_mae_pf']))
+    ]
     return (global_reg, global_cls, global_reg_stats,
             region_reg, region_cls, region_reg_stats,
             region_n, region_samples, hist_data,
             n_files, n_voxels, backend,
-            global_cm, region_cm)
+            global_cm, region_cm, n_obstacles_pf, global_reg_per_file, filenames_pf)
 
 
 # =============================================================================
@@ -771,7 +831,7 @@ def main():
          region_reg, region_cls, region_reg_stats,
          region_n, region_samples, hist_data,
          n_files, n_voxels, backend_label,
-         global_cm, region_cm) = _load_from_npz(args.from_npz)
+         global_cm, region_cm, n_obstacles_pf, global_reg_per_file, filenames_pf) = _load_from_npz(args.from_npz)
 
         region_names = ["reachable", "graded", "thin"]
         print_header(f"CapaciNet Evaluation (from npz)  |  {n_files} files")
@@ -802,11 +862,19 @@ def main():
                               global_cm=global_cm, global_n=n_voxels)
         plot_region_slices(region_samples, args.output_dir,
                            slice_axis=args.slice_axis, slice_idx=args.slice_idx)
+        if n_obstacles_pf is not None:
+            plot_obstacle_scatter(n_obstacles_pf,
+                                  [d['MAE']  for d in global_reg_per_file],
+                                  [d['RMSE'] for d in global_reg_per_file],
+                                  os.path.join(args.output_dir, "obstacle_scatter.png"))
         save_report(global_reg, global_cls, os.path.join(args.output_dir, "report.txt"),
                     n_files=n_files, n_voxels=n_voxels,
                     region_cls=region_cls, region_n=region_n,
                     region_reg=region_reg, global_reg_stats=global_reg_stats,
-                    region_reg_stats=region_reg_stats, backend=backend_label)
+                    region_reg_stats=region_reg_stats, backend=backend_label,
+                    global_reg_per_file=global_reg_per_file,
+                    n_obstacles_per_file=n_obstacles_pf,
+                    filenames_per_file=filenames_pf)
         print(f"\n  Saved to: {args.output_dir}/\n")
         return
 
@@ -842,12 +910,16 @@ def main():
     region_samples = []   # first 3 (pred, label, raw) volumes for region_slices plot
     global_reg_per_file  = []                        # per-file global regression dicts
     region_reg_per_file  = {r: [] for r in region_names}  # per-file per-region regression dicts
+    n_obstacles_per_file = []                         # number of occupied voxels per scene
+    filenames_per_file   = []                         # basename of each evaluated file
 
     for i, fp in enumerate(val_files):
         fname = os.path.basename(fp)
         pred, label, raw = predict_file(infer_fn, device, fp)   # 3D volumes
         all_preds.append(pred.ravel())
         all_labels.append(label.ravel())
+        n_obstacles_per_file.append(int((raw > 0).sum()))
+        filenames_per_file.append(os.path.basename(fp))
         if i < 3 and not args.region_sample:
             region_samples.append((pred, label, raw))
 
@@ -914,6 +986,10 @@ def main():
                           global_cm=global_cm, global_n=len(all_preds))
     plot_region_slices(region_samples, args.output_dir,
                        slice_axis=args.slice_axis, slice_idx=args.slice_idx)
+    plot_obstacle_scatter(n_obstacles_per_file,
+                          [d['MAE']  for d in global_reg_per_file],
+                          [d['RMSE'] for d in global_reg_per_file],
+                          os.path.join(args.output_dir, "obstacle_scatter.png"))
     _save_extended_npz(
         os.path.join(args.output_dir, "confusion_matrices.npz"),
         global_cm=global_cm, region_cm=region_cm, region_n=region_n,
@@ -923,12 +999,17 @@ def main():
         region_samples=region_samples,
         all_preds=all_preds, all_labels=all_labels,
         backend=backend_label,
+        n_obstacles_per_file=n_obstacles_per_file,
+        filenames_per_file=filenames_per_file,
     )
     save_report(global_reg, global_cls, os.path.join(args.output_dir, "report.txt"),
                 n_files=len(val_files), n_voxels=len(all_preds),
                 region_cls=region_cls, region_n=region_n,
                 region_reg=region_reg, global_reg_stats=global_reg_stats,
-                region_reg_stats=region_reg_stats, backend=backend_label)
+                region_reg_stats=region_reg_stats, backend=backend_label,
+                global_reg_per_file=global_reg_per_file,
+                n_obstacles_per_file=n_obstacles_per_file,
+                filenames_per_file=filenames_per_file)
 
     print(f"\n  Saved to: {args.output_dir}/")
     if _HAS_MATPLOTLIB:
