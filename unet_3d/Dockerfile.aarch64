@@ -53,6 +53,25 @@ RUN git clone --depth=1 https://github.com/wolny/pytorch-3dunet.git /tmp/pytorch
 RUN pip3 install --no-cache-dir "numpy<2"
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# ÉTAPE 3b — TensorRT 10.16 (inférence UNet3D via reachability_engine/trt_model)
+#
+# Le runtime nvidia (mode CSV) ne monte PAS TensorRT dans le conteneur ; il faut
+# l'installer. On épingle un set COHÉRENT 10.16.1.11 (python3-libnvinfer tire
+# libnvinfer10/plugin/onnxparsers à la même version), sinon apt prend des versions
+# mélangées (python bindings en 11.x). libnvinfer-bin fournit trtexec.
+#
+# IMPORTANT : un engine .trt n'est compatible qu'avec SA version de TensorRT.
+# L'engine doit donc être (re)construit DANS ce conteneur avec ce TRT 10.16.1
+# (build trtexec = au runtime, il faut un GPU — impossible pendant docker build).
+# ═══════════════════════════════════════════════════════════════════════════════
+ARG TRT_VERSION=10.16.1.11-1+cuda13.2
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3-libnvinfer=${TRT_VERSION} \
+        libnvinfer-bin=${TRT_VERSION} \
+    && rm -rf /var/lib/apt/lists/* && \
+    python3 -c "import tensorrt as trt; print('TensorRT python:', trt.__version__)"
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # ÉTAPE 4 — Workspace ROS2 CapacityNet
 # ═══════════════════════════════════════════════════════════════════════════════
 RUN mkdir -p /workspace/capacitynet/ros2_ws/src
@@ -78,6 +97,17 @@ RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
     colcon build --symlink-install"
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# ÉTAPE 4b — RMW : Cyclone DDS (remplace FastDDS)
+# Meilleur comportement sur gros messages (PointCloud2 reachability_map) et config
+# plus simple. DOIT être identique sur TOUT le graphe ROS (capacitynet + leeloo),
+# sinon capacitynet ne reçoit plus /curobo_trajectory_planner/voxel_grid_sparse.
+# ═══════════════════════════════════════════════════════════════════════════════
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ros-jazzy-rmw-cyclonedds-cpp \
+    && rm -rf /var/lib/apt/lists/*
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # ÉTAPE 5 — Entrypoint (sans conda — Python 3.12 global hérité de la base)
 # ═══════════════════════════════════════════════════════════════════════════════
 RUN printf '#!/bin/bash\nset -e\nsource /opt/ros/jazzy/setup.bash\nsource /workspace/capacitynet/ros2_ws/install/setup.bash 2>/dev/null || true\nexport CUDA_LAUNCH_BLOCKING=0\nexport PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512\necho "========================================"\necho "CapacityNet ROS2 Environment (aarch64)"\necho "========================================"\necho "ROS2 Distro: $(printenv ROS_DISTRO)"\necho "Python: $(python3 --version)"\npython3 -c "import torch; print('"'"'PyTorch: '"'"' + torch.__version__)" 2>/dev/null || echo "PyTorch: not loaded"\npython3 -c "import torch; print('"'"'CUDA Available: '"'"' + str(torch.cuda.is_available()))" 2>/dev/null || true\npython3 -c "from pytorch3dunet.unet3d import model; print('"'"'pytorch-3dunet: OK'"'"')" 2>/dev/null || echo "pytorch-3dunet: import error"\necho "========================================"\nexec "$@"\n' > /workspace/entrypoint.sh && chmod +x /workspace/entrypoint.sh
@@ -96,6 +126,7 @@ RUN echo 'source /opt/ros/jazzy/setup.bash' >> ~/.bashrc && \
     echo 'source /workspace/capacitynet/ros2_ws/install/setup.bash 2>/dev/null || true' >> ~/.bashrc && \
     echo 'export CUDA_LAUNCH_BLOCKING=0' >> ~/.bashrc && \
     echo 'export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512' >> ~/.bashrc && \
+    echo 'export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp' >> ~/.bashrc && \
     echo 'alias rebuild="/workspace/rebuild.sh"' >> ~/.bashrc && \
     echo 'alias launch="/workspace/launch_node.sh"' >> ~/.bashrc
 
