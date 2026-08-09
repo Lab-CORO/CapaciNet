@@ -5,11 +5,11 @@ from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-# (name, default, description) — kept as a table because the node has many knobs
-# and declaring each one by hand triples the length of this file.
+# Only the region and inference knobs — the probe has no motion parameters
+# because it has no BaseCommander, and so no way to command the base.
 ARGUMENTS = [
     ('voxel_grid_topic', '/curobo_trajectory_planner/voxel_grid_sparse',
-     'curobo_msgs/SparseVoxelGrid topic driving the control loop'),
+     'curobo_msgs/SparseVoxelGrid topic driving the evaluation loop'),
     ('marker_topic', '/fiducial_markers',
      'FiducialMarkerArray topic providing the fallback workspace center'),
     ('goal_topic', '/curobo_trajectory_planner/mpc_goal',
@@ -20,8 +20,6 @@ ARGUMENTS = [
      'Number of path poses (from the end) added to the scored region; 0 = goal only'),
     ('planning_frame', 'dsr01/world',
      'Frame assumed for goal_topic, which carries no header'),
-    ('cmd_vel_topic', '/cmd_vel',
-     'geometry_msgs/Twist topic commanding the mobile base'),
     ('target_marker_id', '-1',
      'Marker id used as workspace center; -1 = first marker in the array'),
     ('model_config_path', '/home/ros2_ws/src/capacitynet/config/test_reach.yaml',
@@ -34,25 +32,8 @@ ARGUMENTS = [
     ('path_radius', '0.30',
      'Path-tail sphere radius in meters (region centers 1+). Defaults to the '
      'same value as workspace_radius'),
-    ('ee_frame', 'dsr01/link_6',
-     'TF frame rigidly attached to the arm TCP/end-effector; base stops once it '
-     'enters the workspace region. Empty string disables the interlock'),
-    ('arm_stop_margin', '0.05',
-     'Hysteresis band in meters added to workspace_radius before the '
-     'arm-in-workspace interlock releases'),
     ('grid_spacing', '0.10',
-     'Grid spacing delta in meters; also bounds travel between gradient updates'),
-
-    ('base_speed', '0.02',
-     'Commanded speed ceiling in m/s (hardware-validated maximum)'),
-    ('step_fraction', '0.5',
-     'Fraction of delta the base may travel per control cycle; sets the adaptive cap'),
-    ('min_speed', '0.002',
-     'Below this commanded speed the node declares convergence and publishes zero'),
-    ('control_gain', '1.0',
-     'Proportional gain k in v = k * grad Q'),
-    ('gradient_taper_ref', '0.0',
-     'Reference |grad Q| for the quadratic taper near the optimum; 0 disables it'),
+     'Grid spacing delta in meters between the 9 candidate base positions'),
     ('gradient_method', 'least_squares',
      "Gradient stencil: 'least_squares' (all 9 maps) or 'central' (4 maps)"),
 
@@ -61,35 +42,21 @@ ARGUMENTS = [
     ('static_obstacles_yaml', '/home/ros2_ws/src/capacitynet/config/floor_world.yml',
      'Path to the static obstacles YAML'),
 
-    ('publish_rate', '10.0',
-     'Rate in Hz at which /cmd_vel is (re)published by the watchdog'),
-    ('command_timeout', '1.0',
-     'Seconds without a reachability update before the base is stopped'),
     ('marker_timeout', '2.0',
-     'Seconds without a marker detection before the base is stopped'),
+     'Seconds without a marker detection before the marker region is dropped'),
     ('mpc_timeout', '2.0',
      'Seconds without an MPC goal/path before falling back to the marker'),
-
-    ('start_enabled', 'false',
-     'Start commanding immediately instead of waiting for ~/enable'),
-    ('grasper_state_topic', '/object_grasper/state',
-     'Grasp state topic; any non-idle state blocks motion. Empty string disables the interlock'),
-    ('grasper_allowed_states', 'idle,act_move_pregrasp',
-     'Comma-separated grasper states that permit base motion. Stops at '
-     'act_move_pregrasp because grasp.py only actively corrects for a moving '
-     'target up to that state; from act_open_gripper onward the arm holds its '
-     'last pose uncorrected'),
     ('static_workspace_center', '',
      'Fixed workspace center "x,y,z" in the voxel grid frame, overriding both the '
      'MPC goal and the marker. Required for bag replay, since no recorded bag '
      'contains /fiducial_markers or /mpc_predicted_path'),
 
     ('log_timing', 'true',
-     'Log gradient, velocity and cycle time each control cycle'),
+     'Log gradient, Q and cycle time each evaluation cycle'),
     ('log_quality_scores', 'false',
-     'Log the 3x3 block of quality scores each control cycle'),
+     'Log the 3x3 block of quality scores each cycle'),
     ('publish_debug_markers', 'true',
-     'Publish the 9 candidate scores and the gradient arrow as RViz markers'),
+     'Publish the region spheres, the 9 candidate scores and the gradient arrow'),
 ]
 
 # Topic remappings, not node parameters: WorkspaceRegionSource's TransformListener
@@ -102,7 +69,7 @@ TF_REMAP_ARGUMENTS = [
 
 
 def generate_launch_description():
-    """Launch the reachability-gradient mobile base controller."""
+    """Launch the reachability pipeline without any base actuation."""
 
     declared = [
         DeclareLaunchArgument(name, default_value=default, description=description)
@@ -111,10 +78,10 @@ def generate_launch_description():
 
     parameters = {name: LaunchConfiguration(name) for name, _, _ in ARGUMENTS}
 
-    gradient_base_controller_node = Node(
+    workspace_probe_node = Node(
         package='capacitynet',
-        executable='gradient_base_controller',
-        name='gradient_base_controller',
+        executable='workspace_probe',
+        name='workspace_probe',
         output='screen',
         parameters=[parameters],
         remappings=[
@@ -123,4 +90,4 @@ def generate_launch_description():
         ],
     )
 
-    return LaunchDescription(declared + [gradient_base_controller_node])
+    return LaunchDescription(declared + [workspace_probe_node])

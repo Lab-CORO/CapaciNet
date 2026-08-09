@@ -1,66 +1,103 @@
 #!/usr/bin/env python3
+"""Score a reachability map over a workspace region.
+
+The region is a union of equal-radius spheres: one centre scores a single goal
+(the ArTag, or an MPC goal), several score the approach corridor the arm
+actually traverses (goal + the tail of the MPC path). Overlapping spheres are
+covered once, so Q is the mean over the swept volume rather than an average of
+per-centre means.
+
+This is the single "region -> Q" abstraction in the package. `gradient_controller`
+builds one instance per region and reuses it across cycles for its mask cache;
+`brain` and `workspace_reachability_node` call `compute_quality_score` directly.
+"""
 
 import torch
 
-from .voxel_mask import VoxelMask
-
-_coord_grid_cache = {}
-
-
-def _get_coord_grids(size_x, size_y, size_z, device):
-    """Return a cached torch.meshgrid of voxel indices, shared across sphere centers.
-
-    Rebuilding a (size_x, size_y, size_z) meshgrid per pose is the dominant
-    cost when scoring many centers (e.g. an MPC path) against the same grid.
-    """
-    key = (size_x, size_y, size_z, device)
-    grids = _coord_grid_cache.get(key)
-    if grids is None:
-        i = torch.arange(size_x, dtype=torch.float32, device=device)
-        j = torch.arange(size_y, dtype=torch.float32, device=device)
-        k = torch.arange(size_z, dtype=torch.float32, device=device)
-        grids = torch.meshgrid(i, j, k, indexing='ij')
-        _coord_grid_cache[key] = grids
-    return grids
+from .voxel_mask import VoxelMask, get_coord_grids
 
 
 class WorkspaceEvaluation:
     """
     Evaluate reachability quality score within a spherical workspace region.
 
-    The workspace is a 3D sphere (ball) centered at center_xyz with the given
-    radius; center_z is meaningful (unlike the previous cylindrical definition).
+    The region is the union of spheres of `radius` around one or more centres.
+    center_z is meaningful (unlike the previous cylindrical definition).
 
-    All operations stay on GPU to avoid CPU-GPU transfers.
+    All operations stay on GPU to avoid CPU-GPU transfers. The region mask is
+    cached against the voxel grid geometry, so a static target rebuilds nothing
+    between cycles.
     """
 
-    def __init__(self, center_xyz, radius=0.30, device='cuda'):
+    def __init__(self, centers_xyz, radius=0.30, device='cuda'):
         """
         Args:
-            center_xyz: tuple (x, y, z) in meters for the spherical workspace center
-            radius: float, radius in meters (default: 0.30m)
+            centers_xyz: a single (x, y, z) tuple, or an iterable of them, in
+                         meters — the sphere centres of the region
+            radius: float sphere radius shared by every centre (default: 0.30m),
+                or a sequence of floats matching centers_xyz (one radius per
+                centre — e.g. a larger sphere for the goal than for the path tail)
             device: torch device ('cuda' or 'cpu')
         """
         self.device = device
-        self._center_xyz = center_xyz
-        self._radius = radius
+        self._centers = self._normalize_centers(centers_xyz)
+        self._radius = self._normalize_radius(radius, len(self._centers))
 
         self._cached_mask = None
         self._cache_key = None
 
-    def _generate_mask(self, origin, resolution, size_x, size_y, size_z):
+    @staticmethod
+    def _normalize_centers(centers_xyz):
+        """Accept either one (x, y, z) or an iterable of them; return a list."""
+        items = list(centers_xyz)
+        if not items:
+            raise ValueError('Workspace region needs at least one center')
+        # A bare (x, y, z) has scalar elements; a region has tuple elements.
+        if not hasattr(items[0], '__len__'):
+            items = [items]
+        return [tuple(float(v) for v in c) for c in items]
+
+    @staticmethod
+    def _normalize_radius(radius, n_centers):
+        """Accept either one shared radius or a per-centre sequence; return a list."""
+        if hasattr(radius, '__len__'):
+            radii = [float(r) for r in radius]
+            if len(radii) != n_centers:
+                raise ValueError(
+                    f'radius sequence length {len(radii)} != {n_centers} centers')
+            return radii
+        return [float(radius)] * n_centers
+
+    @property
+    def centers(self):
+        """The region centres, as a list of (x, y, z) tuples."""
+        return self._centers
+
+    @property
+    def radius(self):
+        """Sphere radius in meters, one per centre (see _normalize_radius)."""
+        return self._radius
+
+    def region_mask(self, origin, resolution, size_x, size_y, size_z):
+        """
+        Union-of-spheres mask for this region on the given voxel grid.
+
+        Cached against the grid geometry: the same instance reused across cycles
+        rebuilds the mask only when the grid itself changes.
+
+        Args:
+            origin, resolution, size_x, size_y, size_z: voxel grid parameters
+
+        Returns:
+            VoxelMask: the region mask
+        """
         cache_key = (origin.x, origin.y, origin.z, resolution, size_x, size_y, size_z)
         if self._cached_mask is not None and self._cache_key == cache_key:
             return self._cached_mask
 
-        mask = VoxelMask.sphere_3d(
-            center_xyz=self._center_xyz,
-            radius=self._radius,
-            origin=origin,
-            resolution=resolution,
-            size_x=size_x,
-            size_y=size_y,
-            size_z=size_z,
+        mask = VoxelMask.union_of_spheres(
+            self._centers, self._radius,
+            origin, resolution, size_x, size_y, size_z,
             device=self.device
         )
 
@@ -70,16 +107,16 @@ class WorkspaceEvaluation:
 
     def compute_quality_score(self, reachability_map, origin, resolution, size_x, size_y, size_z):
         """
-        Compute quality score Q: mean reachability within the workspace.
+        Compute quality score Q: mean reachability within the workspace region.
 
         Args:
             reachability_map: torch.Tensor on GPU, shape (size_x, size_y, size_z)
             origin, resolution, size_x, size_y, size_z: voxel grid parameters
 
         Returns:
-            float: Mean reachability value inside workspace
+            float: Mean reachability value inside the region
         """
-        mask = self._generate_mask(origin, resolution, size_x, size_y, size_z)
+        mask = self.region_mask(origin, resolution, size_x, size_y, size_z)
         return mask.compute_mean(reachability_map)
 
     @staticmethod
@@ -89,9 +126,9 @@ class WorkspaceEvaluation:
         """
         Compute mean reachability inside a sphere of `radius` around each center.
 
-        Same region definition as VoxelMask.sphere_3d (squared distance in voxel
-        units vs radius/resolution), but the voxel coordinate grids are built
-        once and reused for every center instead of once per center.
+        Distinct from the union above: this returns *one score per centre*, used
+        to profile a whole MPC path pose by pose. The voxel coordinate grids are
+        shared (see voxel_mask.get_coord_grids) instead of rebuilt per centre.
 
         Args:
             reachability_map: torch.Tensor on GPU, shape (size_x, size_y, size_z)
@@ -103,7 +140,7 @@ class WorkspaceEvaluation:
         Returns:
             list[float]: mean reachability for each center, 0.0 for an empty sphere
         """
-        i_grid, j_grid, k_grid = _get_coord_grids(size_x, size_y, size_z, device)
+        i_grid, j_grid, k_grid = get_coord_grids(size_x, size_y, size_z, device)
         radius_voxels_sq = (radius / resolution) ** 2
 
         scores = []

@@ -2,7 +2,31 @@
 
 import torch
 import numpy as np
-import yaml
+
+_coord_grid_cache = {}
+
+
+def get_coord_grids(size_x, size_y, size_z, device):
+    """Return a cached torch.meshgrid of voxel indices for a grid geometry.
+
+    Every sphere/union test in the package compares voxel indices against a
+    centre, so the same (size_x, size_y, size_z) meshgrid is rebuilt on every
+    call unless it is cached. At 152^3 that is the dominant cost of building a
+    region mask. The cache is keyed on geometry + device only — the grids hold
+    indices, not world coordinates, so they are independent of origin and
+    resolution.
+
+    The returned tensors are shared: treat them as read-only.
+    """
+    key = (size_x, size_y, size_z, device)
+    grids = _coord_grid_cache.get(key)
+    if grids is None:
+        i = torch.arange(size_x, dtype=torch.float32, device=device)
+        j = torch.arange(size_y, dtype=torch.float32, device=device)
+        k = torch.arange(size_z, dtype=torch.float32, device=device)
+        grids = torch.meshgrid(i, j, k, indexing='ij')
+        _coord_grid_cache[key] = grids
+    return grids
 
 
 class VoxelMask:
@@ -45,11 +69,6 @@ class VoxelMask:
             self.mask = torch.full(shape, fill_value, dtype=torch.bool, device=device)
         else:
             raise ValueError("Either mask_tensor or shape must be provided")
-
-    @property
-    def shape(self):
-        """Get mask shape (size_x, size_y, size_z)."""
-        return self.mask.shape
 
     def clone(self):
         """Create a deep copy of this mask."""
@@ -135,18 +154,6 @@ class VoxelMask:
         """
         return voxelmap[self.mask]
 
-    def compute_sum(self, voxelmap):
-        """
-        Compute sum of voxel values where mask is True.
-
-        Args:
-            voxelmap: torch.Tensor on GPU
-
-        Returns:
-            torch.Tensor: Sum of masked values (scalar tensor)
-        """
-        return torch.sum(voxelmap[self.mask])
-
     def compute_mean(self, voxelmap):
         """
         Compute mean of voxel values where mask is True.
@@ -190,15 +197,6 @@ class VoxelMask:
 
     # ==================== Conversions ====================
 
-    def to_float(self):
-        """
-        Convert to float tensor (0.0 or 1.0).
-
-        Returns:
-            torch.Tensor: Float representation of mask
-        """
-        return self.mask.float()
-
     def to_numpy(self):
         """
         Convert to numpy array (CPU).
@@ -222,31 +220,6 @@ class VoxelMask:
     def is_empty(self):
         """Check if mask has no True voxels."""
         return self.count() == 0
-
-    def get_bounds(self):
-        """
-        Get bounding box of True voxels in index space.
-
-        Returns:
-            dict: {'i_min', 'i_max', 'j_min', 'j_max', 'k_min', 'k_max'}
-                  or None if mask is empty
-        """
-        if self.is_empty():
-            return None
-
-        indices = torch.nonzero(self.mask, as_tuple=False)  # (N, 3)
-        i_coords = indices[:, 0]
-        j_coords = indices[:, 1]
-        k_coords = indices[:, 2]
-
-        return {
-            'i_min': int(torch.min(i_coords).item()),
-            'i_max': int(torch.max(i_coords).item()),
-            'j_min': int(torch.min(j_coords).item()),
-            'j_max': int(torch.max(j_coords).item()),
-            'k_min': int(torch.min(k_coords).item()),
-            'k_max': int(torch.max(k_coords).item()),
-        }
 
     # ==================== Operators ====================
 
@@ -319,24 +292,6 @@ class VoxelMask:
         return combined_mask
 
     @staticmethod
-    def from_yaml(yaml_path, origin, resolution, size_x, size_y, size_z, device='cuda'):
-        """
-        Create mask from YAML file.
-
-        Args:
-            yaml_path: str, path to YAML file
-            origin, resolution, size_x, size_y, size_z: voxel grid parameters
-            device: torch device
-
-        Returns:
-            VoxelMask: Mask from YAML definition
-        """
-        with open(yaml_path, 'r') as f:
-            definition = yaml.safe_load(f)
-        return VoxelMask.from_definition(definition, origin, resolution,
-                                          size_x, size_y, size_z, device)
-
-    @staticmethod
     def _create_cuboid(dims, pose, origin, resolution, size_x, size_y, size_z, device):
         """
         Create mask from an axis-aligned cuboid.
@@ -407,13 +362,8 @@ class VoxelMask:
         center_j = (cy - origin.y) / resolution
         center_k = (cz - origin.z) / resolution
 
-        # Create coordinate grids
-        i_coords = torch.arange(size_x, dtype=torch.float32, device=device)
-        j_coords = torch.arange(size_y, dtype=torch.float32, device=device)
-        k_coords = torch.arange(size_z, dtype=torch.float32, device=device)
-
-        # Create 3D meshgrid
-        i_grid, j_grid, k_grid = torch.meshgrid(i_coords, j_coords, k_coords, indexing='ij')
+        # Shared voxel-index grids (see get_coord_grids)
+        i_grid, j_grid, k_grid = get_coord_grids(size_x, size_y, size_z, device)
 
         # Calculate distance from center
         dist_voxels = torch.sqrt(
@@ -431,32 +381,9 @@ class VoxelMask:
         return VoxelMask(mask_tensor=mask, device=device)
 
     @staticmethod
-    def sphere_3d(center_xyz, radius, origin, resolution, size_x, size_y, size_z, device='cuda'):
-        """
-        Create a spherical mask (3D ball) centered at center_xyz.
-
-        Unlike circular_2d (which extrudes a disc along Z into a cylinder),
-        this bounds the region in all three axes, so center_z is meaningful.
-        Useful for workspace definition as a true sphere.
-
-        Args:
-            center_xyz: tuple (x, y, z) in meters
-            radius: float, radius in meters
-            origin, resolution, size_x, size_y, size_z: voxel grid parameters
-            device: torch device
-
-        Returns:
-            VoxelMask: Spherical mask
-        """
-        return VoxelMask._create_sphere(
-            list(center_xyz), radius, origin, resolution,
-            size_x, size_y, size_z, device
-        )
-
-    @staticmethod
     def union_of_spheres(centers, radius, origin, resolution,
                          size_x, size_y, size_z, device='cuda'):
-        """Create the union of equal-radius spheres centred on several points.
+        """Create the union of spheres centred on several points.
 
         Builds the voxel coordinate grid once and ORs one distance test per
         centre into a single boolean mask, rather than instantiating a VoxelMask
@@ -469,73 +396,34 @@ class VoxelMask:
 
         Args:
             centers: iterable of (x, y, z) tuples in meters
-            radius: float, sphere radius in meters (shared by all centres)
+            radius: float sphere radius shared by every centre, or a sequence of
+                floats (one per centre — e.g. a larger sphere for the goal than
+                for the path tail)
             origin, resolution, size_x, size_y, size_z: voxel grid parameters
             device: torch device
 
         Returns:
             VoxelMask: Union mask
         """
-        i_coords = torch.arange(size_x, dtype=torch.float32, device=device)
-        j_coords = torch.arange(size_y, dtype=torch.float32, device=device)
-        k_coords = torch.arange(size_z, dtype=torch.float32, device=device)
-        i_grid, j_grid, k_grid = torch.meshgrid(i_coords, j_coords, k_coords, indexing='ij')
+        centers = list(centers)
+        radii = radius if hasattr(radius, '__len__') else [radius] * len(centers)
+        if len(radii) != len(centers):
+            raise ValueError(
+                f'radius sequence length {len(radii)} != {len(centers)} centers')
 
-        # Squared comparison in voxel units — same region as _create_sphere, which
-        # takes the sqrt before comparing, and as compute_quality_scores_batched.
-        radius_voxels_sq = (radius / resolution) ** 2
+        i_grid, j_grid, k_grid = get_coord_grids(size_x, size_y, size_z, device)
 
         mask = torch.zeros((size_x, size_y, size_z), dtype=torch.bool, device=device)
-        for cx, cy, cz in centers:
+        for (cx, cy, cz), r in zip(centers, radii):
             center_i = (cx - origin.x) / resolution
             center_j = (cy - origin.y) / resolution
             center_k = (cz - origin.z) / resolution
+            # Squared comparison in voxel units — same region as _create_sphere,
+            # which takes the sqrt before comparing.
+            radius_voxels_sq = (r / resolution) ** 2
             dist_sq = ((i_grid - center_i) ** 2
                        + (j_grid - center_j) ** 2
                        + (k_grid - center_k) ** 2)
             mask |= dist_sq <= radius_voxels_sq
 
         return VoxelMask(mask_tensor=mask, device=device)
-
-    @staticmethod
-    def circular_2d(center_xy, radius, origin, resolution, size_x, size_y, size_z, device='cuda'):
-        """
-        Create cylindrical mask (circle in XY plane, unbounded in Z).
-
-        Useful for workspace definition.
-
-        Args:
-            center_xy: tuple (x, y) in meters
-            radius: float, radius in meters
-            origin, resolution, size_x, size_y, size_z: voxel grid parameters
-            device: torch device
-
-        Returns:
-            VoxelMask: Cylindrical mask
-        """
-        cx, cy = center_xy
-
-        # Convert center to voxel coordinates
-        center_i = (cx - origin.x) / resolution
-        center_j = (cy - origin.y) / resolution
-
-        # Create coordinate grids for X and Y
-        i_coords = torch.arange(size_x, dtype=torch.float32, device=device)
-        j_coords = torch.arange(size_y, dtype=torch.float32, device=device)
-
-        # Create 2D meshgrid
-        i_grid, j_grid = torch.meshgrid(i_coords, j_coords, indexing='ij')
-
-        # Calculate 2D distance from center
-        dist_voxels = torch.sqrt((i_grid - center_i)**2 + (j_grid - center_j)**2)
-
-        # Convert radius to voxel units
-        radius_voxels = radius / resolution
-
-        # Create 2D circular mask
-        mask_2d = dist_voxels <= radius_voxels
-
-        # Expand to 3D (cylinder)
-        mask_3d = mask_2d.unsqueeze(2).expand(size_x, size_y, size_z)
-
-        return VoxelMask(mask_tensor=mask_3d, device=device)

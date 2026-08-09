@@ -28,6 +28,7 @@ setup(
             'workspace_reachability_node=capacitynet.workspace_reachability_node:main',
             'gradient_controller_mock=capacitynet.gradient_controller_mock:main',
             'gradient_base_controller=capacitynet.gradient_base_controller:main',
+            'workspace_probe=capacitynet.workspace_probe:main',
             'brain_orchestrator=capacitynet.brain_orchestrator:main',
             'brain=capacitynet.brain:main',
             'grasp=capacitynet.grasp:main',

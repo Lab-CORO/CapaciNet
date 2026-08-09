@@ -124,7 +124,7 @@ class BrainDebug(Node):
         rm = self.engine.predict(voxel_map)
 
         workspace_eval = WorkspaceEvaluation(
-            center_xyz=center, radius=self.workspace_radius, device=self.device
+            centers_xyz=center, radius=self.workspace_radius, device=self.device
         )
         quality = workspace_eval.compute_quality_score(
             rm, msg.origin, msg.resolution, msg.size_x, msg.size_y, msg.size_z

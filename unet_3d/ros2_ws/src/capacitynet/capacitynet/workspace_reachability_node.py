@@ -153,7 +153,7 @@ class WorkspaceReachabilityNode(Node):
 
         self.declare_parameter('voxel_grid_topic', '/curobo_trajectory_planner/voxel_grid_sparse')
         self.declare_parameter('goal_topic', '/curobo_trajectory_planner/mpc_goal')
-        self.declare_parameter('path_topic', '/mpc_predicted_path')
+        self.declare_parameter('path_topic', '/mpc_predicted_path_full')
         self.declare_parameter('state_topic', '/object_grasper/state')
         self.declare_parameter('planning_frame', 'dsr01/world')
 
@@ -430,7 +430,7 @@ class WorkspaceReachabilityNode(Node):
         """
         if self._goal_eval is None or self._goal_eval_center != goal:
             self._goal_eval = WorkspaceEvaluation(
-                center_xyz=goal, radius=self.workspace_radius, device=self.device)
+                centers_xyz=goal, radius=self.workspace_radius, device=self.device)
             self._goal_eval_center = goal
         return self._goal_eval
 

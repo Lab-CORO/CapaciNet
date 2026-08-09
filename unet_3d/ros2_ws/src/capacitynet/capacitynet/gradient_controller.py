@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
+"""Reachability quality score Q and its spatial gradient over a 3x3 candidate grid.
 
-import torch
-import numpy as np
+ROS-free by design: this module turns 9 reachability maps into a *measurement*
+(Q_i and grad Q). Turning that measurement into a velocity command — gain,
+saturation, taper, deadband — belongs to `base_commander`, so the same math can
+be reused by a probe node that never touches /cmd_vel.
+"""
+
 import time
-from geometry_msgs.msg import Twist
-from .voxel_mask import VoxelMask
+
+import numpy as np
+import torch
+
+from .workspace_evaluation import WorkspaceEvaluation
 
 
 class GradientBasedController:
     """
-    Gradient-based mobile base controller using reachability maps.
+    Reachability-gradient evaluator over a 3x3 grid of candidate base positions.
 
-    Computes quality score gradient from a 3x3 grid of reachability maps
-    and generates velocity commands for the mobile base.
+    Computes the quality-score gradient from a 3x3 grid of reachability maps.
 
     Grid layout (indices 0-8):
         0: (-δ,+δ)   1: (0,+δ)   2: (+δ,+δ)
@@ -22,9 +29,11 @@ class GradientBasedController:
     Each RM is computed in the robot base frame at that grid position.
     The workspace region moves relative to each base position.
 
-    The region is one or more spheres of `workspace_radius`, unioned: a single
-    centre scores the ArTag alone, while goal + the tail of the MPC path scores
-    the approach corridor the arm actually traverses. See compute_quality_scores.
+    The region is one or more spheres, unioned: a single centre (radius
+    `workspace_radius`) scores the ArTag alone, while goal + the tail of the MPC
+    path scores the approach corridor the arm actually traverses — the goal
+    sphere at `workspace_radius`, the path-tail spheres at `path_radius`. See
+    compute_quality_scores.
 
     Gradient computation, selected by `gradient_method`:
 
@@ -47,24 +56,22 @@ class GradientBasedController:
     Either way the centre Q[4] carries zero weight — it sits at the origin, so it
     defines the value, not the slope. It is reported in debug_info for convergence
     logging.
-
-    Velocity command:
-        v = k · ∇Q
     """
 
-    def __init__(self, workspace_radius=0.30, grid_spacing=0.10, gain=1.0,
-                 max_linear_vel=0.10, device='cuda',
-                 gradient_method='least_squares'):
+    def __init__(self, workspace_radius=0.30, grid_spacing=0.10, device='cuda',
+                 gradient_method='least_squares', path_radius=None):
         """
-        Initialize gradient-based controller.
+        Initialize the gradient evaluator.
 
         Args:
-            workspace_radius: float, radius of circular workspace in meters (default: 0.30m)
+            workspace_radius: float, radius of the goal sphere (region centre 0)
+                in meters (default: 0.30m)
             grid_spacing: float, spacing δ between grid points in meters (default: 0.10m)
-            gain: float, proportional gain k for velocity command (default: 1.0)
-            max_linear_vel: float, maximum linear velocity in m/s (default: 0.10 m/s)
             device: torch device ('cuda' or 'cpu')
             gradient_method: 'least_squares' (default, uses all 9 maps) or 'central'
+            path_radius: float, radius of the path-tail spheres (region centres
+                1+) in meters. None (default) reuses workspace_radius, matching
+                the single-radius behavior before path_radius existed.
         """
         if gradient_method not in ('central', 'least_squares'):
             raise ValueError(
@@ -72,9 +79,8 @@ class GradientBasedController:
             )
 
         self.workspace_radius = workspace_radius
+        self.path_radius = path_radius
         self.delta = grid_spacing
-        self.gain = gain
-        self.max_linear_vel = max_linear_vel
         self.device = device
         self.gradient_method = gradient_method
 
@@ -83,11 +89,11 @@ class GradientBasedController:
         # around the goal plus the tail of the MPC path (see compute_quality_scores).
         self.workspace_centers_world = None
 
-        # Cached union mask for the untranslated (index 4) position, plus the key
-        # it was built for. The region only moves when the goal/path moves, so a
-        # static target rebuilds nothing between cycles.
-        self._region_mask = None
-        self._region_mask_key = None
+        # Region evaluator for the untranslated (index 4) position. It owns the
+        # union mask and its cache, and is only rebuilt when the centers move, so
+        # a static target rebuilds nothing between cycles.
+        self._region_eval = None
+
         # Set per cycle: True when the 9 masks were obtained by integer shifts of
         # a single build, False when each had to be rebuilt (δ not a whole number
         # of voxels). Surfaced in debug_info so the node can log it.
@@ -102,7 +108,7 @@ class GradientBasedController:
 
         # Full columns/rows for the least-squares stencil. Column index maps to x
         # (col 0 = -δ, col 2 = +δ), row index maps to y (row 0 = +δ, row 2 = -δ) —
-        # same convention as _get_grid_offset and ObstacleMapTransformer.
+        # same convention as grid_offsets and ObstacleMapTransformer.
         self.idx_col_x_plus = (2, 5, 8)
         self.idx_col_x_minus = (0, 3, 6)
         self.idx_row_y_plus = (0, 1, 2)
@@ -125,72 +131,48 @@ class GradientBasedController:
         region covering the goal plus the last few MPC path poses scores the
         approach corridor the arm actually traverses rather than the tag alone.
 
+        The region evaluator is only rebuilt when the centers actually move,
+        preserving its mask cache across cycles with a static target.
+
         Args:
             centers_xyz: iterable of (x, y, z) tuples in meters
         """
         centers = [tuple(float(v) for v in c) for c in centers_xyz]
         if not centers:
             raise ValueError('Workspace region needs at least one center')
-        self.workspace_centers_world = centers
+        if centers != self.workspace_centers_world:
+            self.workspace_centers_world = centers
+            self._region_eval = WorkspaceEvaluation(
+                centers, self._radii_for(centers), self.device)
 
-    @property
-    def workspace_center_world(self):
-        """Primary center (goal). None until update_workspace_*() is called."""
-        if self.workspace_centers_world is None:
-            return None
-        return self.workspace_centers_world[0]
-
-    def _get_grid_offset(self, index):
+    def _radii_for(self, centers):
+        """Per-centre radii: workspace_radius for the goal (index 0), path_radius
+        (or workspace_radius if unset) for every path-tail centre.
         """
-        Get the (x, y) offset for a given grid index.
+        path_r = self.path_radius if self.path_radius is not None else self.workspace_radius
+        return [self.workspace_radius] + [path_r] * (len(centers) - 1)
 
-        Args:
-            index: int, grid index (0-8)
+    def grid_offsets(self):
+        """
+        The 9 base-position offsets of the candidate grid, in meters.
 
         Returns:
-            tuple: (offset_x, offset_y) in meters
+            list: 9 tuples (offset_x, offset_y), in grid-index order 0..8
         """
-        row = index // 3  # 0, 1, 2 (top to bottom)
-        col = index % 3   # 0, 1, 2 (left to right)
-
-        offset_x = (col - 1) * self.delta  # -δ, 0, +δ
-        offset_y = (1 - row) * self.delta  # +δ, 0, -δ
-
-        return offset_x, offset_y
-
-    def _get_workspace_center_for_rm(self, rm_index):
-        """
-        Get the workspace center in the reference frame of a specific RM.
-
-        When the base moves by (offset_x, offset_y), the workspace center
-        moves by (-offset_x, -offset_y) in the base reference frame.
-
-        Args:
-            rm_index: int, index of the reachability map (0-8)
-
-        Returns:
-            tuple: (x, y, z) workspace center in RM reference frame
-        """
-        if self.workspace_center_world is None:
-            raise RuntimeError("Workspace center not set. Call update_workspace_center() first.")
-
-        tag_x, tag_y, tag_z = self.workspace_center_world
-        offset_x, offset_y = self._get_grid_offset(rm_index)
-
-        # Workspace center in this RM's reference frame
-        center_x = tag_x - offset_x
-        center_y = tag_y - offset_y
-        center_z = tag_z
-
-        return (center_x, center_y, center_z)
+        offsets = []
+        for index in range(9):
+            row = index // 3  # 0, 1, 2 (top to bottom)
+            col = index % 3   # 0, 1, 2 (left to right)
+            offsets.append(((col - 1) * self.delta,   # -δ, 0, +δ
+                            (1 - row) * self.delta))  # +δ, 0, -δ
+        return offsets
 
     def _get_region_centers_for_rm(self, rm_index):
         """
         Get every region center in the reference frame of a specific RM.
 
-        Same displacement rule as _get_workspace_center_for_rm, applied to the
-        whole region: when the base moves by (offset_x, offset_y), the world —
-        goal and path alike — moves by (-offset_x, -offset_y) in the base frame.
+        When the base moves by (offset_x, offset_y), the world — goal and path
+        alike — moves by (-offset_x, -offset_y) in the base frame.
 
         Args:
             rm_index: int, index of the reachability map (0-8)
@@ -202,18 +184,9 @@ class GradientBasedController:
             raise RuntimeError(
                 "Workspace region not set. Call update_workspace_region() first.")
 
-        offset_x, offset_y = self._get_grid_offset(rm_index)
+        offset_x, offset_y = self.grid_offsets()[rm_index]
         return [(cx - offset_x, cy - offset_y, cz)
                 for cx, cy, cz in self.workspace_centers_world]
-
-    def _build_region_mask(self, centers, vg_info):
-        """Union-of-spheres mask over `centers`, at the workspace radius."""
-        return VoxelMask.union_of_spheres(
-            centers, self.workspace_radius,
-            vg_info['origin'], vg_info['resolution'],
-            vg_info['size_x'], vg_info['size_y'], vg_info['size_z'],
-            device=self.device
-        )
 
     def compute_quality_scores(self, reachability_maps, vg_info):
         """
@@ -237,7 +210,7 @@ class GradientBasedController:
         Returns:
             torch.Tensor: Quality scores, shape (9,), on GPU
         """
-        if self.workspace_centers_world is None:
+        if self._region_eval is None:
             raise RuntimeError(
                 "Workspace region not set. Call update_workspace_region() first.")
 
@@ -246,29 +219,23 @@ class GradientBasedController:
         shift_int = int(round(shift_voxels))
         self.mask_shift_exact = abs(shift_voxels - shift_int) < 1e-6 and shift_int != 0
 
-        base_mask = None
-        if self.mask_shift_exact:
-            origin = vg_info['origin']
-            key = (tuple(self.workspace_centers_world), self.workspace_radius,
-                   origin.x, origin.y, origin.z, resolution,
-                   vg_info['size_x'], vg_info['size_y'], vg_info['size_z'])
-            if self._region_mask is None or self._region_mask_key != key:
-                self._region_mask = self._build_region_mask(
-                    self.workspace_centers_world, vg_info)
-                self._region_mask_key = key
-            base_mask = self._region_mask
+        base_mask = self._region_eval.region_mask(**vg_info) if self.mask_shift_exact else None
+        offsets = self.grid_offsets()
 
         scores = torch.zeros(9, dtype=reachability_maps.dtype, device=self.device)
 
         for i in range(9):
             if base_mask is not None:
-                offset_x, offset_y = self._get_grid_offset(i)
+                offset_x, offset_y = offsets[i]
                 di = -int(round(offset_x / resolution))
                 dj = -int(round(offset_y / resolution))
                 mask = base_mask if (di == 0 and dj == 0) else base_mask.translated(di, dj)
             else:
-                mask = self._build_region_mask(
-                    self._get_region_centers_for_rm(i), vg_info)
+                # δ is not a whole number of voxels: rebuild each region exactly.
+                rm_centers = self._get_region_centers_for_rm(i)
+                mask = WorkspaceEvaluation(
+                    rm_centers, self._radii_for(rm_centers), self.device
+                ).region_mask(**vg_info)
 
             scores[i] = mask.compute_mean(reachability_maps[i])
 
@@ -300,119 +267,38 @@ class GradientBasedController:
 
         return grad_x.item(), grad_y.item()
 
-    def gradient_to_velocity(self, grad_x, grad_y):
+    def evaluate(self, reachability_maps, vg_info):
         """
-        Convert gradient to velocity command with saturation.
+        Score the 9 candidate positions and fit the gradient.
 
-        Args:
-            grad_x, grad_y: float, gradient components
-
-        Returns:
-            tuple: (vx, vy) velocity command in m/s
-        """
-        # Proportional control: v = k · ∇Q
-        vx = self.gain * grad_x
-        vy = self.gain * grad_y
-
-        # Saturate to maximum velocity
-        vel_magnitude = np.sqrt(vx**2 + vy**2)
-        if vel_magnitude > self.max_linear_vel:
-            scale = self.max_linear_vel / vel_magnitude
-            vx *= scale
-            vy *= scale
-
-        return vx, vy
-
-    def create_twist_message(self, vx, vy):
-        """
-        Create ROS2 Twist message from velocity command.
-
-        Args:
-            vx, vy: float, velocity components in m/s
-
-        Returns:
-            geometry_msgs/Twist message
-        """
-        twist = Twist()
-        twist.linear.x = float(vx)
-        twist.linear.y = float(vy)
-        twist.linear.z = 0.0
-        twist.angular.x = 0.0
-        twist.angular.y = 0.0
-        twist.angular.z = 0.0
-        return twist
-
-    def compute_control(self, reachability_maps, vg_info):
-        """
-        Main control loop: compute gradient and generate velocity command.
+        This is a measurement, not a command: no gain, no saturation, no message.
 
         Args:
             reachability_maps: torch.Tensor, shape (9, size_x, size_y, size_z) on GPU
             vg_info: dict with voxel grid parameters
 
         Returns:
-            twist_msg: geometry_msgs/Twist message
-            debug_info: dict with gradient, scores, velocities, and timing for logging
+            dict: scores, gradient, magnitude, centre score, region metadata, timing
         """
         t_start = time.time()
 
-        # Compute quality scores for all 9 positions
         scores = self.compute_quality_scores(reachability_maps, vg_info)
         t_after_scores = time.time()
 
-        # Compute gradient
         grad_x, grad_y = self.compute_gradient(scores)
-        t_after_gradient = time.time()
-
-        # Generate velocity command
-        vx, vy = self.gradient_to_velocity(grad_x, grad_y)
-        t_after_velocity = time.time()
-
-        # Create Twist message
-        twist_msg = self.create_twist_message(vx, vy)
-        t_after_message = time.time()
-
         t_end = time.time()
 
-        # Debug info for logging
-        debug_info = {
+        return {
             'scores': scores.cpu().numpy(),
             'gradient': (grad_x, grad_y),
-            'velocity': (vx, vy),
-            'gradient_magnitude': np.sqrt(grad_x**2 + grad_y**2),
-            'velocity_magnitude': np.sqrt(vx**2 + vy**2),
+            'gradient_magnitude': float(np.hypot(grad_x, grad_y)),
             'score_center': scores[self.idx_center].item(),
             'gradient_method': self.gradient_method,
             'region_size': len(self.workspace_centers_world),
             'mask_shift_exact': self.mask_shift_exact,
             'timing': {
                 'score_computation': (t_after_scores - t_start) * 1000,
-                'gradient_computation': (t_after_gradient - t_after_scores) * 1000,
-                'velocity_generation': (t_after_velocity - t_after_gradient) * 1000,
-                'message_creation': (t_after_message - t_after_velocity) * 1000,
-                'total': (t_end - t_start) * 1000
-            }
+                'gradient_computation': (t_end - t_after_scores) * 1000,
+                'total': (t_end - t_start) * 1000,
+            },
         }
-
-        return twist_msg, debug_info
-
-    def get_grid_positions_world(self, base_position):
-        """
-        Get the 9 grid positions in world coordinates given current base position.
-
-        Useful for visualization or RM computation planning.
-
-        Args:
-            base_position: tuple (x, y) current base position in meters
-
-        Returns:
-            list: 9 tuples (x, y) representing grid positions in world frame
-        """
-        base_x, base_y = base_position
-        positions = []
-
-        for i in range(9):
-            offset_x, offset_y = self._get_grid_offset(i)
-            positions.append((base_x + offset_x, base_y + offset_y))
-
-        return positions

@@ -23,6 +23,7 @@
   <depend>heron_interface</depend>
   <depend>python3-h5py</depend>
   <depend>python3-matplotlib</depend>
+  <depend>python3-scipy</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

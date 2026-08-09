@@ -15,6 +15,8 @@ from control_msgs.action import GripperCommand
 from curobo_msgs.srv import TrajectoryGeneration
 from curobo_msgs.msg import SparseVoxelGrid
 
+from .base_commander import gradient_to_velocity
+
 
 class State(Enum):
     IDLE = 0
@@ -190,10 +192,11 @@ class BrainOrchestrator(Node):
         self.gradient_ctrl = GradientBasedController(
             workspace_radius=workspace_radius,
             grid_spacing=grid_spacing,
-            gain=gain,
-            max_linear_vel=max_vel,
             device=device
         )
+        # Gain and saturation are motion decisions, applied via gradient_to_velocity.
+        self.control_gain = gain
+        self.max_linear_vel = max_vel
 
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self.voxel_grid_sub = self.create_subscription(
@@ -226,15 +229,20 @@ class BrainOrchestrator(Node):
         rm_9 = self.engine.predict_batch(transformed)
 
         self.gradient_ctrl.update_workspace_center(self.workspace_center)
-        twist, debug_info = self.gradient_ctrl.compute_control(rm_9, vg_info)
+        debug_info = self.gradient_ctrl.evaluate(rm_9, vg_info)
+        grad_x, grad_y = debug_info['gradient']
+        vx, vy = gradient_to_velocity(
+            grad_x, grad_y, self.control_gain, self.max_linear_vel)
+
+        twist = Twist()
+        twist.linear.x = float(vx)
+        twist.linear.y = float(vy)
         self.cmd_vel_pub.publish(twist)
 
         del rm_9, transformed, voxel_map
 
         if self.log_control_timing:
             t_total = (time.time() - t_start) * 1000.0
-            grad_x, grad_y = debug_info['gradient']
-            vx, vy = debug_info['velocity']
             self.get_logger().info(
                 f"∇Q=({grad_x:+.4f},{grad_y:+.4f}) v=({vx:+.4f},{vy:+.4f}) m/s total={t_total:.1f}ms"
             )

@@ -203,26 +203,6 @@ class ObstacleMapTransformer:
         # Stack into single tensor
         return torch.cat(transformed_maps, dim=0)  # (9, 1, size_x, size_y, size_z)
 
-    def batch_transform(self, voxel_map, deltas, origin=None):
-        """
-        Apply multiple transformations in batch.
-
-        Args:
-            voxel_map: torch.Tensor, shape (1, 1, size_x, size_y, size_z) on GPU
-            deltas: list of tuples [(dx1, dy1), (dx2, dy2), ...] in meters
-            origin: Point3D-like with .x, .y, .z (required if static obstacles defined)
-
-        Returns:
-            torch.Tensor: shape (N, 1, size_x, size_y, size_z), N transformed maps
-        """
-        transformed_maps = []
-
-        for delta_x, delta_y in deltas:
-            transformed = self.transform(voxel_map, delta_x, delta_y, origin=origin)
-            transformed_maps.append(transformed)
-
-        return torch.cat(transformed_maps, dim=0)
-
     def update_resolution(self, new_resolution):
         """
         Update voxel resolution (e.g., if scene resolution changes).
@@ -231,45 +211,3 @@ class ObstacleMapTransformer:
             new_resolution: float, new voxel size in meters
         """
         self.resolution = new_resolution
-
-    @staticmethod
-    def prepare_voxel_map(voxel_array, device='cuda'):
-        """
-        Convert numpy array or 3D tensor to 5D tensor format.
-
-        Args:
-            voxel_array: numpy array or torch.Tensor, shape (size_x, size_y, size_z)
-            device: torch device
-
-        Returns:
-            torch.Tensor: shape (1, 1, size_x, size_y, size_z) on GPU
-        """
-        if not isinstance(voxel_array, torch.Tensor):
-            voxel_tensor = torch.from_numpy(voxel_array)
-        else:
-            voxel_tensor = voxel_array
-
-        # Add batch and channel dimensions
-        if voxel_tensor.dim() == 3:
-            voxel_tensor = voxel_tensor.unsqueeze(0).unsqueeze(0)
-
-        return voxel_tensor.to(device)
-
-    @staticmethod
-    def get_grid_offsets(grid_spacing=0.10):
-        """
-        Get the 9 grid offsets as a list of (dx, dy) tuples.
-
-        Args:
-            grid_spacing: float, spacing δ in meters
-
-        Returns:
-            list: 9 tuples (dx, dy) in meters
-        """
-        offsets = []
-        for row in range(3):
-            for col in range(3):
-                offset_x = (col - 1) * grid_spacing
-                offset_y = (1 - row) * grid_spacing
-                offsets.append((offset_x, offset_y))
-        return offsets

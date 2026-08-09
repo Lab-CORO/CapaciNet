@@ -5,12 +5,11 @@ from rclpy.node import Node
 import torch
 import numpy as np
 import time
-from geometry_msgs.msg import Twist, Point
-from std_msgs.msg import Header
+from geometry_msgs.msg import Twist
 
+from .base_commander import gradient_to_velocity
 from .obstacle_transformer import ObstacleMapTransformer
 from .gradient_controller import GradientBasedController
-from .voxel_mask import VoxelMask
 
 
 class GradientControllerMockNode(Node):
@@ -65,14 +64,15 @@ class GradientControllerMockNode(Node):
             )
             self.get_logger().info("No static obstacles loaded")
 
-        # Initialize gradient controller
+        # Initialize gradient evaluator. Gain and saturation live outside it, in
+        # gradient_to_velocity, so the same math serves the real controller.
         self.gradient_controller = GradientBasedController(
             workspace_radius=workspace_radius,
             grid_spacing=grid_spacing,
-            gain=gain,
-            max_linear_vel=0.10,
             device=self.device
         )
+        self.control_gain = gain
+        self.max_linear_vel = 0.10
         self.get_logger().info(
             f"Controller initialized: radius={workspace_radius}m, "
             f"spacing={grid_spacing}m, gain={gain}"
@@ -231,12 +231,18 @@ class GradientControllerMockNode(Node):
         t_after_predictions = time.time()
         self.get_logger().info(f"Predictions shape: {predictions.shape}")
 
-        # Step 4: Compute gradient and velocity command
+        # Step 4: Compute gradient, then shape it into a velocity command
         self.get_logger().info("Computing control command...")
-        twist_msg, debug_info = self.gradient_controller.compute_control(
+        debug_info = self.gradient_controller.evaluate(
             predictions,
             self.vg_info
         )
+        grad_x, grad_y = debug_info['gradient']
+        vx, vy = gradient_to_velocity(
+            grad_x, grad_y, self.control_gain, self.max_linear_vel)
+        twist_msg = Twist()
+        twist_msg.linear.x = float(vx)
+        twist_msg.linear.y = float(vy)
         t_after_control = time.time()
 
         # Step 5: Log debug information
@@ -247,15 +253,13 @@ class GradientControllerMockNode(Node):
         self.get_logger().info(f"    {scores[3]:.3f}  {scores[4]:.3f}  {scores[5]:.3f}")
         self.get_logger().info(f"    {scores[6]:.3f}  {scores[7]:.3f}  {scores[8]:.3f}")
 
-        grad_x, grad_y = debug_info['gradient']
         self.get_logger().info(f"\nGradient:")
         self.get_logger().info(f"  ∇Q = ({grad_x:+.4f}, {grad_y:+.4f})")
         self.get_logger().info(f"  |∇Q| = {debug_info['gradient_magnitude']:.4f}")
 
-        vx, vy = debug_info['velocity']
         self.get_logger().info(f"\nVelocity Command:")
         self.get_logger().info(f"  v = ({vx:+.4f}, {vy:+.4f}) m/s")
-        self.get_logger().info(f"  |v| = {debug_info['velocity_magnitude']:.4f} m/s")
+        self.get_logger().info(f"  |v| = {np.hypot(vx, vy):.4f} m/s")
 
         self.get_logger().info(f"\nCenter Score: {debug_info['score_center']:.3f}")
 
@@ -285,13 +289,7 @@ class GradientControllerMockNode(Node):
             f"    ├─ Scores (9x):   {timing['score_computation']:6.1f} ms"
         )
         self.get_logger().info(
-            f"    ├─ Gradient:      {timing['gradient_computation']:6.1f} ms"
-        )
-        self.get_logger().info(
-            f"    ├─ Velocity:      {timing['velocity_generation']:6.1f} ms"
-        )
-        self.get_logger().info(
-            f"    └─ Message:       {timing['message_creation']:6.1f} ms"
+            f"    └─ Gradient:      {timing['gradient_computation']:6.1f} ms"
         )
         self.get_logger().info(
             f"  Publish:            {(t_after_publish - t_after_control)*1000:6.1f} ms"
