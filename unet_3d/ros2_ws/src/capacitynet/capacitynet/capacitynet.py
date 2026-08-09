@@ -25,8 +25,13 @@ class ReachabilityNode(Node):
         self.declare_parameter('continuous_save', False)
         self.declare_parameter('save_replay_path', '')
         self.declare_parameter('log_timing', False)
+        # N'affecte QUE le fallback PyTorch (pas de trt_engine_path valide dans le
+        # YAML) : un engine TensorRT a sa précision figée au build (fp16 via
+        # export_to_trt.py, int8 via calibrate_int8.py) et ignore ce paramètre.
+        self.declare_parameter('fp16', False)
 
         config_path = self.get_parameter('model_config_path').value
+        fp16 = bool(self.get_parameter('fp16').value)
 
         replay_path = self.get_parameter('save_replay_path').value
         if not replay_path:
@@ -39,8 +44,8 @@ class ReachabilityNode(Node):
         self._save_counter = 0
         self.get_logger().info(f'Replay save path: {self._replay_path}')
 
-        self.engine = ReachabilityEngine(config_path)
-        self.get_logger().info('ReachabilityEngine loaded')
+        self.engine = ReachabilityEngine(config_path, fp16=fp16)
+        self.get_logger().info(f'ReachabilityEngine loaded (fp16={fp16})')
 
         self.metrics_pub = self.create_publisher(ReachabilityMetrics, '/reachability_node/metrics', 10)
         self._metrics_frame_counter = 0
@@ -124,7 +129,7 @@ class ReachabilityNode(Node):
         self._last_vg_info = vg_info
 
         # Publication inline (nuage petit -> coût négligeable).
-        self._publish_reachability_map()
+        # self._publish_reachability_map()
 
         if self.get_parameter('continuous_save').value:
             try:

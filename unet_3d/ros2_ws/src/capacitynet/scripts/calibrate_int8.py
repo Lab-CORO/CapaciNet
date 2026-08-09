@@ -59,10 +59,15 @@ def _load_h5_files(data_dir: str) -> list:
 def _preprocess(h5_path: str, spatial: int) -> torch.Tensor:
     """Load and preprocess one H5 file into a (1,1,D,H,W) float32 CUDA tensor.
 
-    Applies the same pipeline as the ROS2 inference node:
+    Applies the SAME pipeline as the ROS2 inference node (reachability_engine.py
+    preprocess/_normalize) and evaluation.py's normalize():
       1. Read 'raw' field (occupancy: 0=free, 1=occupied)
-      2. Invert: 1 - x  → 1=free, 0=occupied
+      2. Min-max normalize to [-1, 1]  → occupied=+1, free=-1
       3. Cast to float32 and reshape to (1, 1, spatial, spatial, spatial)
+
+    Must match production exactly: the entropy calibrator picks INT8 quantization
+    thresholds from the activation histograms seen here. Any mismatch in scale or
+    polarity vs the real inference input silently miscalibrates every layer.
     """
     with h5py.File(h5_path, 'r') as f:
         raw = np.array(f['raw'], dtype=np.float32)
@@ -74,8 +79,10 @@ def _preprocess(h5_path: str, spatial: int) -> torch.Tensor:
                                              mode='nearest')
         raw = t.squeeze().numpy()
 
-    inverted = (1.0 - raw).reshape(1, 1, spatial, spatial, spatial)
-    return torch.from_numpy(inverted)
+    mn, mx = float(raw.min()), float(raw.max())
+    norm01 = (raw - mn) / (mx - mn + 1e-10)
+    normalized = np.clip(2.0 * norm01 - 1.0, -1.0, 1.0).astype(np.float32)
+    return torch.from_numpy(normalized.reshape(1, 1, spatial, spatial, spatial))
 
 
 # ---------------------------------------------------------------------------
@@ -149,11 +156,10 @@ def build_int8_engine(onnx_path: str, engine_path: str, cache_path: str,
     parser = trt.OnnxParser(network, _logger)
 
     print(f'[1/3] Parsing ONNX: {onnx_path}')
-    with open(onnx_path, 'rb') as f:
-        if not parser.parse(f.read()):
-            for i in range(parser.num_errors):
-                print(f'    ONNX parse error: {parser.get_error(i)}')
-            sys.exit(1)
+    if not parser.parse_from_file(onnx_path):
+        for i in range(parser.num_errors):
+            print(f'    ONNX parse error: {parser.get_error(i)}')
+        sys.exit(1)
     print('    ONNX parsed OK')
 
     config = builder.create_builder_config()

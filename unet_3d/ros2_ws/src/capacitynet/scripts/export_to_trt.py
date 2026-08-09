@@ -107,8 +107,7 @@ def build_trt_engine(spatial, onnx_path, engine_path, log_path):
         f'--maxShapes=input:{shape_opt}',
         '--memPoolSize=workspace:16384',
         '--noTF32',
-        '--minTiming=1',   # 1 timing run per kernel (vs default 4) — much faster build
-        '--avgTiming=1',   # 1 average timing (vs default 8)
+        '--avgTiming=1',   # 1 average timing (vs default 8) — faster build. --minTiming removed in TRT 10.x
     ]
 
     print('    Command:', ' '.join(cmd))

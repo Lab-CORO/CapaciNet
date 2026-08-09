@@ -14,19 +14,30 @@ class ReachabilityEngine:
     No ROS dependencies — usable by any node or script.
     """
 
-    def __init__(self, config_path: str):
+    def __init__(self, config_path: str, fp16: bool = False):
         config = yaml.safe_load(open(config_path, 'r'))
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+        # Encodage de l'entrée, doit matcher le transformer `raw` du yaml ayant
+        # servi à entraîner le checkpoint chargé :
+        #   True  -> min-max vers [-1, 1]  (transform `Normalize`, ex. RM_model_cbr)
+        #   False -> occupation brute [0, 1] (transform `Identity`)
+        # ⚠️ Feeder [0,1] à un modèle entraîné en Normalize (ou l'inverse) dégrade
+        # fortement la prédiction (corr ~0.73 au lieu de ~0.999).
+        self.normalize_input = bool(config.get('normalize_input', True))
 
         model = get_model(config['model'])
         utils.load_checkpoint(config['model_path'], model)
         model.to(self.device)
         model.eval()
 
-        self.use_fp16 = False
+        # N'affecte QUE le fallback PyTorch : si un trt_engine_path valide est
+        # fourni plus bas, la précision de l'engine TRT (fp16/int8) prime et ce
+        # flag est ignoré pour l'inférence (self._infer préfère self.trt_model).
+        self.use_fp16 = bool(fp16 and self.device == 'cuda')
+        if self.use_fp16:
+            model = model.half()
         if self.device == 'cuda':
-            # model = model.half()
-            self.use_fp16 = False
             # Force cuDNN to select fastest algorithm; avoids fallback on Jetson/Tegra.
             torch.backends.cudnn.benchmark = True
 
@@ -58,12 +69,16 @@ class ReachabilityEngine:
         if occ.numel() > 0:
             raw[occ] = 1
         raw = raw.reshape(size_x, size_y, size_z)
-        # Occupancy fed in the training convention: obstacle=1, free=0.
-        # _normalize then maps obstacle->+1, free->-1 (= Normalize(raw) at train time).
+        # Occupation dans la convention d'entraînement : obstacle=1, free=0.
         occupancy = raw.float()
-        normalized = self._normalize(occupancy)
+        if self.normalize_input:
+            # obstacle->+1, free->-1  (= Normalize(raw) à l'entraînement, ex. cbr).
+            x = self._normalize(occupancy)
+        else:
+            # occupation brute dans [0, 1]  (checkpoints entraînés en Identity).
+            x = occupancy
         dtype = torch.float16 if self.use_fp16 else torch.float32
-        return normalized.to(dtype).unsqueeze(0).unsqueeze(0)
+        return x.to(dtype).unsqueeze(0).unsqueeze(0)
 
     @staticmethod
     def _normalize(tensor: torch.Tensor) -> torch.Tensor:

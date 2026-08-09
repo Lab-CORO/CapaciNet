@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import time
 from geometry_msgs.msg import Twist
-from .workspace_evaluation import WorkspaceEvaluation
+from .voxel_mask import VoxelMask
 
 
 class GradientBasedController:
@@ -20,18 +20,41 @@ class GradientBasedController:
         6: (-δ,-δ)   7: (0,-δ)   8: (+δ,-δ)
 
     Each RM is computed in the robot base frame at that grid position.
-    The workspace center (ArTag) moves relative to each base position.
+    The workspace region moves relative to each base position.
 
-    Gradient computation (central finite differences):
-        ∂Q/∂x = (Q[5] - Q[3]) / (2δ)
-        ∂Q/∂y = (Q[1] - Q[7]) / (2δ)
+    The region is one or more spheres of `workspace_radius`, unioned: a single
+    centre scores the ArTag alone, while goal + the tail of the MPC path scores
+    the approach corridor the arm actually traverses. See compute_quality_scores.
+
+    Gradient computation, selected by `gradient_method`:
+
+        'central'       central finite differences, the minimal 4-point stencil:
+                            ∂Q/∂x = (Q[5] - Q[3]) / (2δ)
+                            ∂Q/∂y = (Q[1] - Q[7]) / (2δ)
+                        Indices 0, 2, 6, 8 are inferred but never read.
+
+        'least_squares' least-squares fit of a plane Q ≈ c + gx·x + gy·y over all
+                        9 samples. The grid is symmetric (Σxᵢ = Σyᵢ = Σxᵢyᵢ = 0), so
+                        the normal equations decouple to a closed form:
+                            ∂Q/∂x = [(Q2+Q5+Q8) - (Q0+Q3+Q6)] / (6δ)
+                            ∂Q/∂y = [(Q0+Q1+Q2) - (Q6+Q7+Q8)] / (6δ)
+                        Exact for a locally planar Q (identical to 'central' in the
+                        noise-free case), but with 3x lower variance under iid noise
+                        on Q: σ²/(6δ²) vs σ²/(2δ²). Since the commanded direction is
+                        ∇Q/|∇Q|, that direction stability is what damps hunting near
+                        the optimum.
+
+    Either way the centre Q[4] carries zero weight — it sits at the origin, so it
+    defines the value, not the slope. It is reported in debug_info for convergence
+    logging.
 
     Velocity command:
         v = k · ∇Q
     """
 
     def __init__(self, workspace_radius=0.30, grid_spacing=0.10, gain=1.0,
-                 max_linear_vel=0.10, device='cuda'):
+                 max_linear_vel=0.10, device='cuda',
+                 gradient_method='least_squares'):
         """
         Initialize gradient-based controller.
 
@@ -41,15 +64,34 @@ class GradientBasedController:
             gain: float, proportional gain k for velocity command (default: 1.0)
             max_linear_vel: float, maximum linear velocity in m/s (default: 0.10 m/s)
             device: torch device ('cuda' or 'cpu')
+            gradient_method: 'least_squares' (default, uses all 9 maps) or 'central'
         """
+        if gradient_method not in ('central', 'least_squares'):
+            raise ValueError(
+                f"gradient_method must be 'central' or 'least_squares', got {gradient_method!r}"
+            )
+
         self.workspace_radius = workspace_radius
         self.delta = grid_spacing
         self.gain = gain
         self.max_linear_vel = max_linear_vel
         self.device = device
+        self.gradient_method = gradient_method
 
-        # Current workspace center (ArTag position in world frame)
-        self.workspace_center_world = None
+        # Workspace region: one or more centers in the world frame. A single
+        # center is the ArTag/goal alone; several describe the union of spheres
+        # around the goal plus the tail of the MPC path (see compute_quality_scores).
+        self.workspace_centers_world = None
+
+        # Cached union mask for the untranslated (index 4) position, plus the key
+        # it was built for. The region only moves when the goal/path moves, so a
+        # static target rebuilds nothing between cycles.
+        self._region_mask = None
+        self._region_mask_key = None
+        # Set per cycle: True when the 9 masks were obtained by integer shifts of
+        # a single build, False when each had to be rebuilt (δ not a whole number
+        # of voxels). Surfaced in debug_info so the node can log it.
+        self.mask_shift_exact = None
 
         # Indices for gradient computation (central differences)
         self.idx_center = 4
@@ -58,6 +100,14 @@ class GradientBasedController:
         self.idx_y_plus = 1   # (0, +δ)
         self.idx_y_minus = 7  # (0, -δ)
 
+        # Full columns/rows for the least-squares stencil. Column index maps to x
+        # (col 0 = -δ, col 2 = +δ), row index maps to y (row 0 = +δ, row 2 = -δ) —
+        # same convention as _get_grid_offset and ObstacleMapTransformer.
+        self.idx_col_x_plus = (2, 5, 8)
+        self.idx_col_x_minus = (0, 3, 6)
+        self.idx_row_y_plus = (0, 1, 2)
+        self.idx_row_y_minus = (6, 7, 8)
+
     def update_workspace_center(self, workspace_center_xyz):
         """
         Update the workspace center (ArTag position in world frame).
@@ -65,7 +115,30 @@ class GradientBasedController:
         Args:
             workspace_center_xyz: tuple (x, y, z) in meters
         """
-        self.workspace_center_world = workspace_center_xyz
+        self.update_workspace_region([workspace_center_xyz])
+
+    def update_workspace_region(self, centers_xyz):
+        """
+        Update the workspace region as a set of sphere centers in the world frame.
+
+        Q is then the mean reachability over the *union* of the spheres, so a
+        region covering the goal plus the last few MPC path poses scores the
+        approach corridor the arm actually traverses rather than the tag alone.
+
+        Args:
+            centers_xyz: iterable of (x, y, z) tuples in meters
+        """
+        centers = [tuple(float(v) for v in c) for c in centers_xyz]
+        if not centers:
+            raise ValueError('Workspace region needs at least one center')
+        self.workspace_centers_world = centers
+
+    @property
+    def workspace_center_world(self):
+        """Primary center (goal). None until update_workspace_*() is called."""
+        if self.workspace_centers_world is None:
+            return None
+        return self.workspace_centers_world[0]
 
     def _get_grid_offset(self, index):
         """
@@ -111,11 +184,51 @@ class GradientBasedController:
 
         return (center_x, center_y, center_z)
 
+    def _get_region_centers_for_rm(self, rm_index):
+        """
+        Get every region center in the reference frame of a specific RM.
+
+        Same displacement rule as _get_workspace_center_for_rm, applied to the
+        whole region: when the base moves by (offset_x, offset_y), the world —
+        goal and path alike — moves by (-offset_x, -offset_y) in the base frame.
+
+        Args:
+            rm_index: int, index of the reachability map (0-8)
+
+        Returns:
+            list: (x, y, z) centers in the RM reference frame
+        """
+        if self.workspace_centers_world is None:
+            raise RuntimeError(
+                "Workspace region not set. Call update_workspace_region() first.")
+
+        offset_x, offset_y = self._get_grid_offset(rm_index)
+        return [(cx - offset_x, cy - offset_y, cz)
+                for cx, cy, cz in self.workspace_centers_world]
+
+    def _build_region_mask(self, centers, vg_info):
+        """Union-of-spheres mask over `centers`, at the workspace radius."""
+        return VoxelMask.union_of_spheres(
+            centers, self.workspace_radius,
+            vg_info['origin'], vg_info['resolution'],
+            vg_info['size_x'], vg_info['size_y'], vg_info['size_z'],
+            device=self.device
+        )
+
     def compute_quality_scores(self, reachability_maps, vg_info):
         """
         Compute quality scores Q for all 9 reachability maps.
 
-        For each RM, the workspace center is adjusted based on the grid position.
+        Q_i is the mean reachability over the union of the region spheres,
+        expressed in RM i's reference frame. Overlapping spheres are covered
+        once, so Q is the mean over the swept volume, not an average of
+        per-center means.
+
+        The 9 regions are the same shape translated by the grid offsets. When δ
+        spans a whole number of voxels (δ=0.10 m at 0.02 m resolution -> 5) they
+        are exact integer translations, so the union is built once and shifted —
+        N sphere constructions per cycle instead of 9·N. Otherwise each region is
+        rebuilt from its own centers, which is slower but exact for any δ.
 
         Args:
             reachability_maps: torch.Tensor, shape (9, size_x, size_y, size_z) on GPU
@@ -124,35 +237,48 @@ class GradientBasedController:
         Returns:
             torch.Tensor: Quality scores, shape (9,), on GPU
         """
+        if self.workspace_centers_world is None:
+            raise RuntimeError(
+                "Workspace region not set. Call update_workspace_region() first.")
+
+        resolution = vg_info['resolution']
+        shift_voxels = self.delta / resolution
+        shift_int = int(round(shift_voxels))
+        self.mask_shift_exact = abs(shift_voxels - shift_int) < 1e-6 and shift_int != 0
+
+        base_mask = None
+        if self.mask_shift_exact:
+            origin = vg_info['origin']
+            key = (tuple(self.workspace_centers_world), self.workspace_radius,
+                   origin.x, origin.y, origin.z, resolution,
+                   vg_info['size_x'], vg_info['size_y'], vg_info['size_z'])
+            if self._region_mask is None or self._region_mask_key != key:
+                self._region_mask = self._build_region_mask(
+                    self.workspace_centers_world, vg_info)
+                self._region_mask_key = key
+            base_mask = self._region_mask
+
         scores = torch.zeros(9, dtype=reachability_maps.dtype, device=self.device)
 
         for i in range(9):
-            # Get workspace center for this RM
-            workspace_center = self._get_workspace_center_for_rm(i)
+            if base_mask is not None:
+                offset_x, offset_y = self._get_grid_offset(i)
+                di = -int(round(offset_x / resolution))
+                dj = -int(round(offset_y / resolution))
+                mask = base_mask if (di == 0 and dj == 0) else base_mask.translated(di, dj)
+            else:
+                mask = self._build_region_mask(
+                    self._get_region_centers_for_rm(i), vg_info)
 
-            # Create WorkspaceEvaluation for this specific center
-            workspace_eval = WorkspaceEvaluation(
-                center_xyz=workspace_center,
-                radius=self.workspace_radius,
-                device=self.device
-            )
-
-            # Compute quality score
-            score = workspace_eval.compute_quality_score(
-                reachability_maps[i],
-                vg_info['origin'],
-                vg_info['resolution'],
-                vg_info['size_x'],
-                vg_info['size_y'],
-                vg_info['size_z']
-            )
-            scores[i] = score
+            scores[i] = mask.compute_mean(reachability_maps[i])
 
         return scores
 
     def compute_gradient(self, scores):
         """
-        Compute spatial gradient ∇Q using central finite differences.
+        Compute the spatial gradient ∇Q from the 9 quality scores.
+
+        Uses the stencil selected by `gradient_method` (see the class docstring).
 
         Args:
             scores: torch.Tensor, shape (9,), quality scores on GPU
@@ -160,9 +286,17 @@ class GradientBasedController:
         Returns:
             tuple: (grad_x, grad_y) gradient components (float)
         """
-        # Central finite differences
-        grad_x = (scores[self.idx_x_plus] - scores[self.idx_x_minus]) / (2 * self.delta)
-        grad_y = (scores[self.idx_y_plus] - scores[self.idx_y_minus]) / (2 * self.delta)
+        if self.gradient_method == 'central':
+            # Minimal 4-point stencil; diagonals unused.
+            grad_x = (scores[self.idx_x_plus] - scores[self.idx_x_minus]) / (2 * self.delta)
+            grad_y = (scores[self.idx_y_plus] - scores[self.idx_y_minus]) / (2 * self.delta)
+        else:
+            # Least-squares plane fit over all 9 samples. Σxᵢ² = Σyᵢ² = 6δ² on this
+            # grid, hence the 6δ denominator.
+            grad_x = (sum(scores[i] for i in self.idx_col_x_plus)
+                      - sum(scores[i] for i in self.idx_col_x_minus)) / (6 * self.delta)
+            grad_y = (sum(scores[i] for i in self.idx_row_y_plus)
+                      - sum(scores[i] for i in self.idx_row_y_minus)) / (6 * self.delta)
 
         return grad_x.item(), grad_y.item()
 
@@ -248,6 +382,9 @@ class GradientBasedController:
             'gradient_magnitude': np.sqrt(grad_x**2 + grad_y**2),
             'velocity_magnitude': np.sqrt(vx**2 + vy**2),
             'score_center': scores[self.idx_center].item(),
+            'gradient_method': self.gradient_method,
+            'region_size': len(self.workspace_centers_world),
+            'mask_shift_exact': self.mask_shift_exact,
             'timing': {
                 'score_computation': (t_after_scores - t_start) * 1000,
                 'gradient_computation': (t_after_gradient - t_after_scores) * 1000,

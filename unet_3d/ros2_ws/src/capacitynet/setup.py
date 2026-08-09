@@ -25,8 +25,13 @@ setup(
     entry_points={
         'console_scripts': [
             'reachability_node=capacitynet.capacitynet:main',
+            'workspace_reachability_node=capacitynet.workspace_reachability_node:main',
             'gradient_controller_mock=capacitynet.gradient_controller_mock:main',
+            'gradient_base_controller=capacitynet.gradient_base_controller:main',
             'brain_orchestrator=capacitynet.brain_orchestrator:main',
+            'brain=capacitynet.brain:main',
+            'grasp=capacitynet.grasp:main',
+            'test_attach_detach=capacitynet.test_attach_detach:main',
             'replay_maps=capacitynet.replay_maps:main',
             'metrics_recorder=capacitynet.metrics_recorder:main',
             'plot_metrics=capacitynet.plot_metrics:main',

@@ -8,6 +8,9 @@ from enum import Enum
 
 from geometry_msgs.msg import PoseStamped, Pose, Twist
 from std_msgs.msg import Bool
+from visualization_msgs.msg import Marker
+from ros2_markertracker_interfaces.msg import FiducialMarkerArray
+
 from control_msgs.action import GripperCommand
 from curobo_msgs.srv import TrajectoryGeneration
 from curobo_msgs.msg import SparseVoxelGrid
@@ -62,7 +65,7 @@ class BrainOrchestrator(Node):
 
     def _load_parameters(self):
         # AR Tag detection
-        self.declare_parameter('ar_tag_topic', '/ar_pose_marker')
+        self.declare_parameter('ar_tag_topic', '/fiducial_markers')
         self.declare_parameter('ar_tag_timeout', 10.0)
         self.declare_parameter('ar_tag_id', -1)
 
@@ -70,7 +73,7 @@ class BrainOrchestrator(Node):
         self.declare_parameter('trigger_topic', '/brain/trigger')
 
         # Trajectory generation service
-        self.declare_parameter('trajectory_service', '/unified_planner/generate_trajectory')
+        self.declare_parameter('trajectory_service', '/curobo_trajectory_planner/generate_trajectory')
 
         # Gripper control
         self.declare_parameter('gripper_action', '/robotiq_gripper_controller/gripper_cmd')
@@ -98,13 +101,17 @@ class BrainOrchestrator(Node):
         self.declare_parameter('trajectory_timeout', 30.0)
         self.declare_parameter('gripper_timeout', 5.0)
 
-        # Gradient control
-        self.declare_parameter('enable_gradient_control', True)
+        # Gradient control.
+        # Superseded by the standalone `gradient_base_controller` node, which owns
+        # /cmd_vel. Leaving this on as well makes two nodes fight over the base.
+        # Set True only to compare against this legacy in-process path.
+        self.declare_parameter('enable_gradient_control', False)
         self.declare_parameter('model_config_path', '/home/ros2_ws/src/capacitynet/config/test_reach.yaml')
         self.declare_parameter('grid_spacing', 0.10)
         self.declare_parameter('control_gain', 1.0)
         self.declare_parameter('max_linear_velocity', 0.10)
         self.declare_parameter('workspace_radius', 0.30)
+        self.declare_parameter('workspace_frame', 'dsr01/base_link')
         self.declare_parameter('use_static_obstacles', False)
         self.declare_parameter('static_obstacles_yaml', '/home/ros2_ws/src/capacitynet/config/floor_world.yml')
         self.declare_parameter('log_control_timing', True)
@@ -132,15 +139,20 @@ class BrainOrchestrator(Node):
         self.trajectory_timeout = self.get_parameter('trajectory_timeout').value
         self.gripper_timeout = self.get_parameter('gripper_timeout').value
         self.enable_gradient_control = self.get_parameter('enable_gradient_control').value
+        self.workspace_radius = self.get_parameter('workspace_radius').value
+        self.workspace_frame = self.get_parameter('workspace_frame').value
         self.log_control_timing = self.get_parameter('log_control_timing').value
         self.log_quality_scores = self.get_parameter('log_quality_scores').value
 
     def _setup_interfaces(self):
         self.trigger_sub = self.create_subscription(Bool, self.trigger_topic, self.on_trigger_received, 10)
-        self.ar_tag_sub = self.create_subscription(PoseStamped, self.ar_tag_topic, self.on_ar_tag_received, 10)
+        self.ar_tag_sub = self.create_subscription(FiducialMarkerArray, self.ar_tag_topic, self.on_ar_tag_received, 10)
 
         self.traj_gen_client = self.create_client(TrajectoryGeneration, self.trajectory_service)
         self.gripper_client = ActionClient(self, GripperCommand, self.gripper_action)
+
+        # Workspace visualization: sphere marker for RViz (refreshed by state machine).
+        self.workspace_marker_pub = self.create_publisher(Marker, '/workspace_marker', 10)
 
         self.get_logger().info("Waiting for trajectory service...")
         if self.traj_gen_client.wait_for_service(timeout_sec=5.0):
@@ -164,7 +176,7 @@ class BrainOrchestrator(Node):
         grid_spacing = self.get_parameter('grid_spacing').value
         gain = self.get_parameter('control_gain').value
         max_vel = self.get_parameter('max_linear_velocity').value
-        workspace_radius = self.get_parameter('workspace_radius').value
+        workspace_radius = self.workspace_radius
         use_static_obs = self.get_parameter('use_static_obstacles').value
         static_yaml = self.get_parameter('static_obstacles_yaml').value if use_static_obs else None
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -186,7 +198,7 @@ class BrainOrchestrator(Node):
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self.voxel_grid_sub = self.create_subscription(
             SparseVoxelGrid,
-            '/unified_planner/voxel_grid_sparse',
+            '/curobo_trajectory_planner/voxel_grid_sparse',
             self._on_voxel_grid,
             10
         )
@@ -238,6 +250,9 @@ class BrainOrchestrator(Node):
     # ── State machine ──────────────────────────────────────────────────────────
 
     def state_machine_update(self):
+        # Continuously refresh the workspace sphere so RViz tracks its current center.
+        self.publish_workspace_marker()
+
         if self.current_state != self.previous_state:
             self.get_logger().info(
                 f"State: {self.previous_state.name if self.previous_state else 'None'} → {self.current_state.name}"
@@ -268,15 +283,15 @@ class BrainOrchestrator(Node):
             self.get_logger().info("Trigger received, starting pick-and-place sequence")
             self.transition_to(State.WAITING_FOR_TAG)
 
-    def on_ar_tag_received(self, msg: PoseStamped):
-        self.ar_tag_pose = msg
+    def on_ar_tag_received(self, msg: FiducialMarkerArray):
+        self.ar_tag_pose = msg.marker[0]
         self.ar_tag_last_seen = self.get_clock().now()
-        if self.current_state in [State.WAITING_FOR_TAG, State.MOVING_TO_PICK]:
-            self.set_workspace_center(
-                msg.pose.position.x,
-                msg.pose.position.y,
-                msg.pose.position.z
-            )
+        # if self.current_state in [State.WAITING_FOR_TAG, State.MOVING_TO_PICK]:
+        self.set_workspace_center(
+            self.ar_tag_pose.pose_cov_stamped.pose.pose.position.x,
+            self.ar_tag_pose.pose_cov_stamped.pose.pose.position.y,
+            self.ar_tag_pose.pose_cov_stamped.pose.pose.position.z
+        )
 
     # ── States ────────────────────────────────────────────────────────────────
 
@@ -405,6 +420,39 @@ class BrainOrchestrator(Node):
 
     def set_workspace_center(self, x: float, y: float, z: float):
         self.workspace_center = (x, y, z)
+
+    def publish_workspace_marker(self):
+        """Publish the spherical workspace as an RViz SPHERE marker.
+
+        The sphere is centered on the current workspace_center and its diameter
+        equals 2 * workspace_radius, matching the spherical region actually
+        scored by WorkspaceEvaluation. No-op until a workspace center is set.
+        """
+        if self.workspace_center is None:
+            return
+
+        x, y, z = self.workspace_center
+        diameter = 2.0 * self.workspace_radius
+
+        marker = Marker()
+        marker.header.frame_id = "rgb_camera_link"
+        marker.header.stamp = self.get_clock().now().to_msg()
+        marker.ns = 'workspace'
+        marker.id = 0
+        marker.type = Marker.SPHERE
+        marker.action = Marker.ADD
+        marker.pose.position.x = float(x)
+        marker.pose.position.y = float(y)
+        marker.pose.position.z = float(z)
+        marker.pose.orientation.w = 1.0
+        marker.scale.x = diameter
+        marker.scale.y = diameter
+        marker.scale.z = diameter
+        marker.color.r = 0.0
+        marker.color.g = 1.0
+        marker.color.b = 0.0
+        marker.color.a = 0.3
+        self.workspace_marker_pub.publish(marker)
 
     def call_trajectory_service(self, target_pose: Pose) -> bool:
         request = TrajectoryGeneration.Request()

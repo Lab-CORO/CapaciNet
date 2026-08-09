@@ -163,6 +163,31 @@ class VoxelMask:
         else:
             return 0.0
 
+    def translated(self, di, dj, dk=0):
+        """Translate the mask by an integer number of voxels, filling with False.
+
+        Zero-filled rather than wrapped (unlike torch.roll), so voxels pushed off
+        one face do not reappear on the opposite one.
+
+        Args:
+            di, dj, dk: int, shift in voxels along each axis
+
+        Returns:
+            VoxelMask: New, translated mask (same shape)
+        """
+        def _slices(n, d):
+            # out[i] = self[i - d]  ->  destination i in [max(0,d), min(n, n+d))
+            return slice(max(0, d), min(n, n + d)), slice(max(0, -d), min(n, n - d))
+
+        size_x, size_y, size_z = self.mask.shape
+        dst_i, src_i = _slices(size_x, int(di))
+        dst_j, src_j = _slices(size_y, int(dj))
+        dst_k, src_k = _slices(size_z, int(dk))
+
+        result = torch.zeros_like(self.mask)
+        result[dst_i, dst_j, dst_k] = self.mask[src_i, src_j, src_k]
+        return VoxelMask(mask_tensor=result, device=self.device)
+
     # ==================== Conversions ====================
 
     def to_float(self):
@@ -402,6 +427,73 @@ class VoxelMask:
 
         # Create spherical mask
         mask = dist_voxels <= radius_voxels
+
+        return VoxelMask(mask_tensor=mask, device=device)
+
+    @staticmethod
+    def sphere_3d(center_xyz, radius, origin, resolution, size_x, size_y, size_z, device='cuda'):
+        """
+        Create a spherical mask (3D ball) centered at center_xyz.
+
+        Unlike circular_2d (which extrudes a disc along Z into a cylinder),
+        this bounds the region in all three axes, so center_z is meaningful.
+        Useful for workspace definition as a true sphere.
+
+        Args:
+            center_xyz: tuple (x, y, z) in meters
+            radius: float, radius in meters
+            origin, resolution, size_x, size_y, size_z: voxel grid parameters
+            device: torch device
+
+        Returns:
+            VoxelMask: Spherical mask
+        """
+        return VoxelMask._create_sphere(
+            list(center_xyz), radius, origin, resolution,
+            size_x, size_y, size_z, device
+        )
+
+    @staticmethod
+    def union_of_spheres(centers, radius, origin, resolution,
+                         size_x, size_y, size_z, device='cuda'):
+        """Create the union of equal-radius spheres centred on several points.
+
+        Builds the voxel coordinate grid once and ORs one distance test per
+        centre into a single boolean mask, rather than instantiating a VoxelMask
+        per sphere and combining them. Overlapping regions are covered once, so a
+        subsequent compute_mean() averages over the swept volume rather than
+        weighting the overlap twice.
+
+        The mask is boolean; per-region weights (e.g. goal heavier than path)
+        would need a float mask and a weighted mean instead of compute_mean.
+
+        Args:
+            centers: iterable of (x, y, z) tuples in meters
+            radius: float, sphere radius in meters (shared by all centres)
+            origin, resolution, size_x, size_y, size_z: voxel grid parameters
+            device: torch device
+
+        Returns:
+            VoxelMask: Union mask
+        """
+        i_coords = torch.arange(size_x, dtype=torch.float32, device=device)
+        j_coords = torch.arange(size_y, dtype=torch.float32, device=device)
+        k_coords = torch.arange(size_z, dtype=torch.float32, device=device)
+        i_grid, j_grid, k_grid = torch.meshgrid(i_coords, j_coords, k_coords, indexing='ij')
+
+        # Squared comparison in voxel units — same region as _create_sphere, which
+        # takes the sqrt before comparing, and as compute_quality_scores_batched.
+        radius_voxels_sq = (radius / resolution) ** 2
+
+        mask = torch.zeros((size_x, size_y, size_z), dtype=torch.bool, device=device)
+        for cx, cy, cz in centers:
+            center_i = (cx - origin.x) / resolution
+            center_j = (cy - origin.y) / resolution
+            center_k = (cz - origin.z) / resolution
+            dist_sq = ((i_grid - center_i) ** 2
+                       + (j_grid - center_j) ** 2
+                       + (k_grid - center_k) ** 2)
+            mask |= dist_sq <= radius_voxels_sq
 
         return VoxelMask(mask_tensor=mask, device=device)
 

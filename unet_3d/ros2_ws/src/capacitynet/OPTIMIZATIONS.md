@@ -9,6 +9,46 @@ Baseline de départ : **~1387 ms** par cycle (GPU : Orin, PyTorch 2.3.0, cuDNN 8
 
 ---
 
+## 0. État actuel (mesuré le 2026-08-04) — à lire avant les sections suivantes
+
+Les sections 1 à 8 documentent le travail d'optimisation tel qu'il a été mené, avec
+le modèle et la version de TensorRT de l'époque. **Plusieurs chiffres n'y sont plus
+valables.** État réel aujourd'hui :
+
+| | Documenté plus bas | Réel aujourd'hui |
+|---|---|---|
+| Dims spatiales | 152³ | **128³** |
+| TensorRT | 8.6.2 | **10.16.1.11** |
+| Batch max (profil) | 6 → split 6+3 | **10** → batch 9 en un seul appel |
+| f_maps | `[32,64,128,256,512]` | `[16,32,64,128,256]` (voir `test_reach.yaml`) |
+
+Les quatre engines `.trt` du dépôt se désérialisent correctement sous TRT 10.
+
+**Temps mesurés** (engine réellement chargé par `test_reach.yaml`, à savoir
+`config/old_cbe/unet3d_int8.trt`, médiane sur 10 runs, 128³) :
+
+| Batch | Médiane | Par carte |
+|---|---|---|
+| 1 | 39.8 ms | 39.8 ms |
+| 5 | 206.4 ms | 41.3 ms |
+| 9 | **369.8 ms** | 41.1 ms |
+
+Le scaling est **strictement linéaire** : un seul volume 128³ sature déjà le GPU, le
+batching n'apporte aucun gain de débit. Conséquence pratique : les 4 cartes
+diagonales du contrôle par gradient coûtent ~165 ms, ce qui reste rentable face au
+gain de robustesse du stencil moindres carrés (variance du gradient divisée par 3).
+
+Cycle complet du contrôle par gradient (`gradient_base_controller`) :
+
+| Étape | Médiane |
+|---|---|
+| `generate_grid_transforms` (9× `grid_sample`) | 46 ms |
+| `predict_batch` (batch 9, INT8 TRT) | 370 ms |
+| `compute_quality_scores` (9× masque sphérique) | 23 ms |
+| **Total GPU** | **~440 ms → ≈2.3 Hz** |
+
+---
+
 ## 1. Optimisations PyTorch
 
 ### Fichiers modifiés
