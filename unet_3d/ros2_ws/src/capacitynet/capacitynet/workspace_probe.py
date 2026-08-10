@@ -6,8 +6,8 @@ Same two components as `gradient_base_controller`, wired without a
 same inputs, publishes the same debug topics, and *cannot* publish /cmd_vel:
 there is no publisher for it anywhere in this node.
 
-Use it to replay a bag, watch the region and the 3x3 scores in RViz, or plot Q
-over a run, with the robot safely out of the loop:
+Use it to replay a bag, watch the region and the candidate-grid scores in
+RViz, or plot Q over a run, with the robot safely out of the loop:
 
     ros2 run capacitynet workspace_probe --ros-args
         -p static_workspace_center:="0.6,0.3,0.4"
@@ -42,13 +42,16 @@ class WorkspaceProbe(Node):
 
         log = self.get_logger()
         log.info('Workspace probe initialized (no /cmd_vel publisher)')
-        log.info(f'  - Voxel grid topic: {self.pipeline.voxel_grid_topic}')
+        log.info(
+            f'  - Voxel grid topic: {self.pipeline.voxel_grid_topic} '
+            f'(cycle every {self.pipeline.cycle_period}s)')
         log.info(
             f'  - Region: goal={self.region.goal_topic} path={self.region.path_topic} '
             f'(tail={self.region.path_tail_samples}), fallback=marker')
         log.info(
             f'  - Radius: goal={self.region.radius}m path={self.region.path_radius}m, '
-            f'delta: {self.pipeline.delta} m')
+            f'delta: {self.pipeline.delta} m, grid_size: {self.pipeline.grid_size} '
+            f'({self.pipeline.grid_size ** 2} candidates)')
         log.info(f'  - Backend: {self.pipeline.backend}')
         if self.region.static_workspace_center:
             log.info(

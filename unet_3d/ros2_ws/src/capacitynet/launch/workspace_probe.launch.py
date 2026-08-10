@@ -10,6 +10,9 @@ from launch_ros.actions import Node
 ARGUMENTS = [
     ('voxel_grid_topic', '/curobo_trajectory_planner/voxel_grid_sparse',
      'curobo_msgs/SparseVoxelGrid topic driving the evaluation loop'),
+    ('cycle_period', '2.0',
+     'Seconds between inference cycles; the voxel grid subscription only caches '
+     'the latest message, a timer runs the cycle on it at this fixed cadence'),
     ('marker_topic', '/fiducial_markers',
      'FiducialMarkerArray topic providing the fallback workspace center'),
     ('goal_topic', '/curobo_trajectory_planner/mpc_goal',
@@ -18,7 +21,7 @@ ARGUMENTS = [
      'nav_msgs/Path whose tail is unioned with the goal sphere'),
     ('path_tail_samples', '4',
      'Number of path poses (from the end) added to the scored region; 0 = goal only'),
-    ('planning_frame', 'dsr01/world',
+    ('planning_frame', 'dsr01/base_link',
      'Frame assumed for goal_topic, which carries no header'),
     ('target_marker_id', '-1',
      'Marker id used as workspace center; -1 = first marker in the array'),
@@ -33,9 +36,14 @@ ARGUMENTS = [
      'Path-tail sphere radius in meters (region centers 1+). Defaults to the '
      'same value as workspace_radius'),
     ('grid_spacing', '0.10',
-     'Grid spacing delta in meters between the 9 candidate base positions'),
+     'Grid spacing delta in meters between candidate base positions'),
+    ('grid_size', '3',
+     'Number of candidate base positions per grid side (must be odd, >= 3); '
+     'total candidates = grid_size**2 (3 -> 9, 5 -> 25, 7 -> 49). Cost scales '
+     'linearly with candidate count — see OPTIMIZATIONS.md'),
     ('gradient_method', 'least_squares',
-     "Gradient stencil: 'least_squares' (all 9 maps) or 'central' (4 maps)"),
+     "Gradient stencil: 'least_squares' (all grid_size**2 maps) or 'central' "
+     '(4 nearest neighbors of center, regardless of grid_size)'),
 
     ('use_static_obstacles', 'false',
      'Load world-fixed obstacles from YAML so they are not translated with the base'),
@@ -54,9 +62,10 @@ ARGUMENTS = [
     ('log_timing', 'true',
      'Log gradient, Q and cycle time each evaluation cycle'),
     ('log_quality_scores', 'false',
-     'Log the 3x3 block of quality scores each cycle'),
+     'Log the grid_size x grid_size block of quality scores each cycle'),
     ('publish_debug_markers', 'true',
-     'Publish the region spheres, the 9 candidate scores and the gradient arrow'),
+     'Publish the region spheres, the grid_size**2 candidate scores and the '
+     'gradient arrow'),
 ]
 
 # Topic remappings, not node parameters: WorkspaceRegionSource's TransformListener

@@ -62,15 +62,15 @@ class WorkspaceRegionSource(NodeComponent):
         self.path_tail_samples = int(self._declare('path_tail_samples', 4))
         # goal_topic carries a bare Pose with no header; assume this frame
         # (grasp.py always publishes it in the frame it passes to the action).
-        self.planning_frame = self._declare('planning_frame', 'dsr01/world')
+        self.planning_frame = self._declare('planning_frame', 'dsr01/base_link')
         self.marker_timeout = float(self._declare('marker_timeout', 2.0))
         self.mpc_timeout = float(self._declare('mpc_timeout', 2.0))
-        self.workspace_radius = float(self._declare('workspace_radius', 0.30))
+        self.workspace_radius = float(self._declare('workspace_radius', 0.10))
         # Radius of the path-tail spheres (region centers 1+), separate from
         # workspace_radius which sizes only the goal sphere (center 0). Defaults
         # to the same value so unconfigured setups score exactly as before this
         # param existed.
-        self.path_radius = float(self._declare('path_radius', 0.30))
+        self.path_radius = float(self._declare('path_radius', 0.05))
         # TF frame rigidly attached to the arm's TCP/end-effector. Empty (default)
         # disables the arm-in-workspace interlock entirely — there is no safe
         # guess for this across arm/gripper configs, and a wrong guess would
@@ -258,8 +258,9 @@ class WorkspaceRegionSource(NodeComponent):
         VoxelMask.compute_mean returns 0.0 for an empty mask, so a sphere that
         leaves the grid scores as *zero reachability* rather than *unknown* and
         would fabricate a large gradient pointing away from the boundary. The
-        scored centers are `center - offset`, so with a 3x3 candidate grid they
-        range over +/- delta in x and y — that is what `extra_margin` covers.
+        scored centers are `center - offset`, so with an NxN candidate grid they
+        range over +/- (grid_size//2)*delta in x and y — that is what
+        `extra_margin` covers (the caller passes `delta * (grid_size // 2)`).
         Every center is checked: a partially observed corridor would bias Q just
         as badly as a partially observed goal.
         """
@@ -272,7 +273,7 @@ class WorkspaceRegionSource(NodeComponent):
         radii = self._radii_for(centers)
 
         for idx, (center, radius) in enumerate(zip(centers, radii)):
-            # Z is never offset by the 3x3 grid, only X and Y.
+            # Z is never offset by the candidate grid, only X and Y.
             margins = (radius + extra_margin, radius + extra_margin, radius)
             for axis, (c, m) in enumerate(zip(center, margins)):
                 if c - m < lo[axis] or c + m > hi[axis]:

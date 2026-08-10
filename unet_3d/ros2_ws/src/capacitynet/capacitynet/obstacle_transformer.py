@@ -170,38 +170,45 @@ class ObstacleMapTransformer:
 
         return transformed
 
-    def generate_grid_transforms(self, voxel_map, grid_spacing=0.10, origin=None):
+    def generate_grid_transforms(self, voxel_map, grid_spacing=0.10, grid_size=3, origin=None):
         """
-        Generate 9 transformed voxel maps for a 3x3 grid.
+        Generate grid_size**2 transformed voxel maps for a grid_size x grid_size grid.
 
-        Grid layout:
+        Grid layout for grid_size=3 (the default):
             0: (-δ,+δ)   1: (0,+δ)   2: (+δ,+δ)
             3: (-δ, 0)   4: (0, 0)   5: (+δ, 0)
             6: (-δ,-δ)   7: (0,-δ)   8: (+δ,-δ)
+        Larger odd grid_size extends the same lattice outward in steps of δ,
+        row-major (top to bottom, left to right) — same order as
+        GradientBasedController.grid_offsets().
 
         Args:
             voxel_map: torch.Tensor, shape (1, 1, size_x, size_y, size_z) on GPU
             grid_spacing: float, spacing δ in meters (default: 0.10m)
+            grid_size: int, odd, >= 3 (default: 3)
             origin: Point3D-like with .x, .y, .z (required if static obstacles defined)
 
         Returns:
-            torch.Tensor: shape (9, 1, size_x, size_y, size_z), 9 transformed maps
+            torch.Tensor: shape (grid_size**2, 1, size_x, size_y, size_z)
         """
+        if grid_size < 3 or grid_size % 2 == 0:
+            raise ValueError(f'grid_size must be odd and >= 3, got {grid_size!r}')
+
+        half = grid_size // 2
         transformed_maps = []
 
-        # Generate 9 transformations
-        for row in range(3):  # 0, 1, 2 (top to bottom)
-            for col in range(3):  # 0, 1, 2 (left to right)
+        for row in range(grid_size):  # 0..grid_size-1 (top to bottom)
+            for col in range(grid_size):  # 0..grid_size-1 (left to right)
                 # Calculate offset for this grid position
-                offset_x = (col - 1) * grid_spacing  # -δ, 0, +δ
-                offset_y = (1 - row) * grid_spacing  # +δ, 0, -δ
+                offset_x = (col - half) * grid_spacing
+                offset_y = (half - row) * grid_spacing
 
                 # Apply transformation
                 transformed = self.transform(voxel_map, offset_x, offset_y, origin=origin)
                 transformed_maps.append(transformed)
 
         # Stack into single tensor
-        return torch.cat(transformed_maps, dim=0)  # (9, 1, size_x, size_y, size_z)
+        return torch.cat(transformed_maps, dim=0)  # (grid_size**2, 1, size_x, size_y, size_z)
 
     def update_resolution(self, new_resolution):
         """

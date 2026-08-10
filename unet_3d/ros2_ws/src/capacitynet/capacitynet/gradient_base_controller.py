@@ -5,7 +5,7 @@ Wiring only. The work is done by three components, each of which declares its
 own parameters and creates its own ROS endpoints on this node:
 
     WorkspaceRegionSource  -> where to score (MPC goal + path tail, or marker)
-    ReachabilityPipeline   -> 9 reachability maps -> Q_i -> grad Q   (CUDA group)
+    ReachabilityPipeline   -> grid_size**2 reachability maps -> Q_i -> grad Q  (CUDA group)
     BaseCommander          -> /cmd_vel + watchdog + interlocks    (control group)
 
 Because they are independent, a node that leaves out the commander cannot move
@@ -67,7 +67,9 @@ class GradientBaseController(Node):
     def _log_configuration(self):
         log = self.get_logger()
         log.info('Gradient base controller initialized')
-        log.info(f'  - Voxel grid topic: {self.pipeline.voxel_grid_topic}')
+        log.info(
+            f'  - Voxel grid topic: {self.pipeline.voxel_grid_topic} '
+            f'(cycle every {self.pipeline.cycle_period}s)')
         log.info(f'  - Marker topic: {self.region.marker_topic}')
         log.info(
             f'  - Region: goal={self.region.goal_topic} path={self.region.path_topic} '
@@ -78,7 +80,8 @@ class GradientBaseController(Node):
         log.info(f'  - Command topic: {self.commander.cmd_vel_topic}')
         log.info(
             f'  - Base speed: {self.commander.base_speed} m/s, '
-            f'delta: {self.pipeline.delta} m')
+            f'delta: {self.pipeline.delta} m, grid_size: {self.pipeline.grid_size} '
+            f'({self.pipeline.grid_size ** 2} candidates)')
         log.info(f'  - Gradient method: {self.pipeline.gradient_method}')
         log.info(f'  - Backend: {self.pipeline.backend}')
         if self.region.static_workspace_center:

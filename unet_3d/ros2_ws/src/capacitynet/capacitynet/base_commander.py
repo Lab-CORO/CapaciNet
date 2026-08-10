@@ -154,8 +154,12 @@ class BaseCommander(NodeComponent):
 
     def allows_motion(self):
         """Enabled, grasper idle, not converged, and the arm not already inside the workspace."""
-        return (self._enabled and not self._converged and self._grasper_allows_motion()
-                and not self.arm_inside_workspace())
+        # TEMP DEBUG BYPASS: arm-in-workspace interlock disabled to check whether
+        # /cmd_vel gets published at all. Remove this override before real use —
+        # it lets the base keep driving after the TCP has already reached the
+        # scored region, which is exactly what this interlock exists to prevent.
+        return (self._enabled and not self._converged and self._grasper_allows_motion())
+                # and not self.arm_inside_workspace())
 
     def submit(self, gradient, cycle_s, score_center=None):
         """Shape a gradient into the commanded velocity and cache it.

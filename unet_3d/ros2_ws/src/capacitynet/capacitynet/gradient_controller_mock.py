@@ -18,7 +18,7 @@ class GradientControllerMockNode(Node):
 
     This node:
     1. Creates synthetic voxel maps and reachability maps
-    2. Simulates the 9-grid transformation
+    2. Simulates the grid_size x grid_size transformation
     3. Computes gradient and velocity commands
     4. Publishes cmd_vel commands
     5. Logs debug information
@@ -29,6 +29,7 @@ class GradientControllerMockNode(Node):
 
         # Parameters
         self.declare_parameter('grid_spacing', 0.10)
+        self.declare_parameter('grid_size', 3)
         self.declare_parameter('control_frequency', 1.0)  # Hz
         self.declare_parameter('gain', 1.0)
         self.declare_parameter('workspace_radius', 0.30)
@@ -38,6 +39,7 @@ class GradientControllerMockNode(Node):
 
         # Get parameters
         grid_spacing = self.get_parameter('grid_spacing').value
+        grid_size = self.get_parameter('grid_size').value
         control_freq = self.get_parameter('control_frequency').value
         gain = self.get_parameter('gain').value
         workspace_radius = self.get_parameter('workspace_radius').value
@@ -69,6 +71,7 @@ class GradientControllerMockNode(Node):
         self.gradient_controller = GradientBasedController(
             workspace_radius=workspace_radius,
             grid_spacing=grid_spacing,
+            grid_size=grid_size,
             device=self.device
         )
         self.control_gain = gain
@@ -148,12 +151,13 @@ class GradientControllerMockNode(Node):
         Simulates 60ms inference time (realistic for GPU UNet3D).
 
         Args:
-            transformed_voxels: torch.Tensor (9, 1, size_x, size_y, size_z)
+            transformed_voxels: torch.Tensor (n_candidates, 1, size_x, size_y, size_z)
 
         Returns:
-            torch.Tensor: (9, size_x, size_y, size_z) simulated reachability maps
+            torch.Tensor: (n_candidates, size_x, size_y, size_z) simulated
+                reachability maps
         """
-        # Simulate UNet3D inference time (60ms for 9 RMs in batch)
+        # Simulate UNet3D inference time (60ms for a batch of RMs)
         time.sleep(0.060)
 
         batch_size = transformed_voxels.shape[0]
@@ -211,11 +215,13 @@ class GradientControllerMockNode(Node):
         voxel_map = self._create_mock_voxel_map()
         t_after_voxel_creation = time.time()
 
-        # Step 2: Generate 9 transformed voxel maps
-        self.get_logger().info("Generating 9 grid transformations...")
+        # Step 2: Generate grid_size**2 transformed voxel maps
+        n = self.gradient_controller.n_candidates
+        self.get_logger().info(f"Generating {n} grid transformations...")
         transformed_voxels = self.obstacle_transformer.generate_grid_transforms(
             voxel_map,
             grid_spacing=self.gradient_controller.delta,
+            grid_size=self.gradient_controller.grid_size,
             origin=self.vg_info['origin']
         )
         if self.device == 'cuda':
@@ -246,12 +252,10 @@ class GradientControllerMockNode(Node):
         t_after_control = time.time()
 
         # Step 5: Log debug information
-        self.get_logger().info(f"\nQuality Scores (9 positions):")
+        self.get_logger().info(f"\nQuality Scores ({n} positions):")
         scores = debug_info['scores']
         self.get_logger().info(f"  Grid layout:")
-        self.get_logger().info(f"    {scores[0]:.3f}  {scores[1]:.3f}  {scores[2]:.3f}")
-        self.get_logger().info(f"    {scores[3]:.3f}  {scores[4]:.3f}  {scores[5]:.3f}")
-        self.get_logger().info(f"    {scores[6]:.3f}  {scores[7]:.3f}  {scores[8]:.3f}")
+        self.get_logger().info(self.gradient_controller.format_scores(scores))
 
         self.get_logger().info(f"\nGradient:")
         self.get_logger().info(f"  ∇Q = ({grad_x:+.4f}, {grad_y:+.4f})")
@@ -286,7 +290,7 @@ class GradientControllerMockNode(Node):
             f"  Control Compute:    {(t_after_control - t_after_predictions)*1000:6.1f} ms"
         )
         self.get_logger().info(
-            f"    ├─ Scores (9x):   {timing['score_computation']:6.1f} ms"
+            f"    ├─ Scores ({n}x):   {timing['score_computation']:6.1f} ms"
         )
         self.get_logger().info(
             f"    └─ Gradient:      {timing['gradient_computation']:6.1f} ms"

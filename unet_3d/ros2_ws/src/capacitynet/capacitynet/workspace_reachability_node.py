@@ -155,7 +155,7 @@ class WorkspaceReachabilityNode(Node):
         self.declare_parameter('goal_topic', '/curobo_trajectory_planner/mpc_goal')
         self.declare_parameter('path_topic', '/mpc_predicted_path_full')
         self.declare_parameter('state_topic', '/object_grasper/state')
-        self.declare_parameter('planning_frame', 'dsr01/world')
+        self.declare_parameter('planning_frame', 'dsr01/base_link')
 
         self.declare_parameter('workspace_radius', 0.30)
         self.declare_parameter('path_max_samples', 16)

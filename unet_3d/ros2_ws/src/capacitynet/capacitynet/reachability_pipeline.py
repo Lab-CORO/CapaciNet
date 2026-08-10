@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Live voxel grid -> 9 reachability maps -> Q_i -> grad Q.
+"""Latest voxel grid -> N*N reachability maps -> Q_i -> grad Q, every cycle_period.
 
     SparseVoxelGrid -> ReachabilityEngine.preprocess
-                    -> ObstacleMapTransformer (3x3 grid of shifted obstacle maps)
-                    -> ReachabilityEngine.predict_batch  (9 reachability maps)
+                    -> ObstacleMapTransformer (grid_size x grid_size grid of shifted obstacle maps)
+                    -> ReachabilityEngine.predict_batch  (grid_size**2 reachability maps)
                     -> GradientBasedController.evaluate  (Q_i, grad Q)
+
+The voxel grid subscription only caches the latest message; a timer drives the
+actual cycle at a fixed `cycle_period`, decoupling the (expensive, ~440 ms)
+inference rate from whatever rate the voxel grid happens to publish at.
 
 This component produces a *measurement*, never a command. Whoever wants to act
 on it subscribes via `on_result`; whoever only wants to look at it (a probe, a
@@ -31,8 +35,8 @@ class GradientResult:
 
     gradient: tuple            # (grad_x, grad_y) of Q, per meter
     gradient_magnitude: float
-    scores: object             # numpy array of the 9 quality scores
-    score_center: float        # Q at the untranslated position (index 4)
+    scores: object             # numpy array of the grid_size**2 quality scores
+    score_center: float        # Q at the untranslated (center) position
     centers: list              # region sphere centers, in `frame_id`
     region_size: int           # how many spheres the union covers
     mask_shift_exact: bool     # False when each region mask had to be rebuilt
@@ -51,20 +55,32 @@ class ReachabilityPipeline(NodeComponent):
             node: host rclpy Node
             region: a WorkspaceRegionSource — supplies the centers and the radius
             prefix: optional parameter/topic prefix ('' keeps flat names)
-            callback_group: callback group for the voxel grid subscription. Give
-                this its own MutuallyExclusiveCallbackGroup so exactly one
-                inference runs at a time and a ~440 ms cycle cannot stall the
-                node's other callbacks.
+            callback_group: callback group for the voxel grid subscription and
+                the cycle timer. Give this its own MutuallyExclusiveCallbackGroup
+                so exactly one inference runs at a time and a ~440 ms cycle
+                cannot stall the node's other callbacks.
         """
         super().__init__(node, prefix, callback_group)
         self.region = region
 
         self.voxel_grid_topic = self._declare(
             'voxel_grid_topic', '/curobo_trajectory_planner/voxel_grid_sparse')
+        # Fixed cadence for the inference cycle, independent of how fast the
+        # voxel grid actually publishes: the subscription only caches the
+        # latest message, a timer runs the cycle on it every cycle_period.
+        self.cycle_period = float(self._declare('cycle_period', 2.0))
         self.model_config_path = self._declare(
             'model_config_path', '/home/ros2_ws/src/capacitynet/config/test_reach.yaml')
         self.fp16 = bool(self._declare('fp16', False))
         self.grid_spacing = float(self._declare('grid_spacing', 0.10))
+        # Candidate grid is grid_size x grid_size (must be odd, >= 3). Cost
+        # scales linearly with grid_size**2 — see OPTIMIZATIONS.md. Validated
+        # here rather than left to GradientBasedController so a bad value fails
+        # before _setup_engine() spends seconds loading the model onto the GPU.
+        self.grid_size = int(self._declare('grid_size', 3))
+        if self.grid_size < 3 or self.grid_size % 2 == 0:
+            raise ValueError(
+                f'grid_size must be odd and >= 3, got {self.grid_size!r}')
         self.gradient_method = self._declare('gradient_method', 'least_squares')
         self.use_static_obstacles = bool(self._declare('use_static_obstacles', False))
         self.static_obstacles_yaml = self._declare(
@@ -83,6 +99,10 @@ class ReachabilityPipeline(NodeComponent):
         self.gate = lambda: True
         # Called with a GradientResult once a cycle completes.
         self.on_result = None
+
+        # Latest voxel grid message, cached by the subscription callback and
+        # consumed by the timer. None until the first message arrives.
+        self._latest_msg = None
 
         self._setup_engine()
         self._setup_interfaces()
@@ -107,6 +127,7 @@ class ReachabilityPipeline(NodeComponent):
             workspace_radius=self.region.radius,
             path_radius=self.region.path_radius,
             grid_spacing=self.grid_spacing,
+            grid_size=self.grid_size,
             device=self.device,
             gradient_method=self.gradient_method,
         )
@@ -115,8 +136,14 @@ class ReachabilityPipeline(NodeComponent):
     def _setup_interfaces(self):
         node = self.node
         self.voxel_grid_sub = node.create_subscription(
-            SparseVoxelGrid, self.voxel_grid_topic, self.on_voxel_grid, 1,
+            SparseVoxelGrid, self.voxel_grid_topic, self._on_voxel_grid, 1,
             callback_group=self.callback_group)
+        # Same callback group as the subscription: MutuallyExclusiveCallbackGroup
+        # already guarantees exactly one inference runs at a time, so a timer
+        # tick and a subscription callback (which now only assigns a reference)
+        # never race.
+        self.cycle_timer = node.create_timer(
+            self.cycle_period, self._on_timer, callback_group=self.callback_group)
 
         self.grid_marker_pub = None
         self.scores_pub = None
@@ -140,9 +167,17 @@ class ReachabilityPipeline(NodeComponent):
 
     # ── Cycle ────────────────────────────────────────────────────────────────
 
-    def on_voxel_grid(self, msg: SparseVoxelGrid):
-        """Run one cycle: 9 reachability maps -> Q_i -> grad Q."""
+    def _on_voxel_grid(self, msg: SparseVoxelGrid):
+        """Cache the latest voxel grid; the timer drives the actual cycle."""
+        self._latest_msg = msg
+
+    def _on_timer(self):
+        """Run one cycle on the latest cached voxel grid, every cycle_period."""
         if not self.gate():
+            return
+
+        msg = self._latest_msg
+        if msg is None:
             return
 
         centers = self.region.resolve(msg.header.frame_id)
@@ -155,8 +190,10 @@ class ReachabilityPipeline(NodeComponent):
             'resolution': float(msg.resolution),
             'size_x': sx, 'size_y': sy, 'size_z': sz,
         }
-        # The scored centers range over +/- delta in x and y across the 3x3 grid.
-        if not self.region.fits(centers, vg_info, extra_margin=self.delta):
+        # The scored centers range over +/- (grid_size//2)*delta in x and y
+        # across the candidate grid.
+        if not self.region.fits(
+                centers, vg_info, extra_margin=self.delta * (self.grid_size // 2)):
             return
 
         t_start = time.time()
@@ -164,14 +201,15 @@ class ReachabilityPipeline(NodeComponent):
         voxel_map = self.engine.preprocess(msg.occupied_indices, sx, sy, sz)
         self.obstacle_transformer.update_resolution(vg_info['resolution'])
         transformed = self.obstacle_transformer.generate_grid_transforms(
-            voxel_map, grid_spacing=self.delta, origin=vg_info['origin'])
+            voxel_map, grid_spacing=self.delta, grid_size=self.grid_size,
+            origin=vg_info['origin'])
 
-        rm_9 = self.engine.predict_batch(transformed)
+        reachability_maps = self.engine.predict_batch(transformed)
 
         self.gradient_ctrl.update_workspace_region(centers)
-        debug = self.gradient_ctrl.evaluate(rm_9, vg_info)
+        debug = self.gradient_ctrl.evaluate(reachability_maps, vg_info)
 
-        del rm_9, transformed, voxel_map
+        del reachability_maps, transformed, voxel_map
 
         result = GradientResult(
             gradient=debug['gradient'],
@@ -196,15 +234,10 @@ class ReachabilityPipeline(NodeComponent):
 
     def _log_cycle(self, result):
         if self.log_quality_scores:
-            s = result.scores
-            self.log.info(
-                'Q scores:\n'
-                f'  {s[0]:.4f}  {s[1]:.4f}  {s[2]:.4f}\n'
-                f'  {s[3]:.4f}  {s[4]:.4f}  {s[5]:.4f}\n'
-                f'  {s[6]:.4f}  {s[7]:.4f}  {s[8]:.4f}')
+            self.log.info('Q scores:\n' + self.gradient_ctrl.format_scores(result.scores))
 
         if result.mask_shift_exact is False:
-            # delta is not a whole number of voxels, so the 9 region masks cannot
+            # delta is not a whole number of voxels, so the region masks cannot
             # be integer-shifted copies and each is rebuilt from its own centers.
             self.log.warn(
                 f'grid_spacing={self.delta} m is not a whole number of voxels — '
@@ -217,8 +250,8 @@ class ReachabilityPipeline(NodeComponent):
             return
         self.grid_marker_pub.publish(build_grid_markers(
             result.frame_id, self.node.get_clock().now().to_msg(),
-            result.centers[0], result.scores, result.gradient,
-            self.gradient_ctrl.grid_offsets(), cell_size=self.delta,
+            result.scores, result.gradient,
+            self.gradient_ctrl.grid_offsets(), radius=self.grid_spacing/2,
             floor_z=self.floor_z))
         self.scores_pub.publish(
             Float32MultiArray(data=[float(s) for s in result.scores]))

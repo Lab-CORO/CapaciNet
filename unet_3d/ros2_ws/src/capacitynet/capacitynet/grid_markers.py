@@ -13,41 +13,48 @@ from std_msgs.msg import ColorRGBA
 from visualization_msgs.msg import Marker, MarkerArray
 
 
-def build_grid_markers(frame_id, stamp, center, scores, gradient, offsets,
-                       cell_size, floor_z=0.0, ns='reachability_grid'):
-    """Draw the 9 candidate scores as a flat floor heatmap, plus the gradient arrow.
+def build_grid_markers(frame_id, stamp, scores, gradient, offsets,
+                       radius, floor_z=0.0, ns='reachability_grid'):
+    """Draw the candidate scores as a flat floor heatmap, plus the gradient arrow.
 
-    One CUBE_LIST tiles the 3x3 candidate grid edge-to-edge at `floor_z`, colored
-    per-cell by Q, so it reads as a small 2D map rather than 9 floating spheres at
-    candidate-query height. Tile i sits at `center + offset_i` (in x/y only — the
-    scored workspace center is `center - offset_i`; the sign is flipped here so
-    the display reads as a motion suggestion rather than a workspace
-    displacement), same in-plane position the spheres used to occupy.
+    Both are drawn around the mobile base's own origin (0, 0), not the goal:
+    `offsets[i]` already *is* the candidate base displacement for RM i (see
+    `GradientBasedController.grid_offsets`), so tile i sits exactly there, and
+    the gradient arrow — a direction for the base to move — starts at (0, 0)
+    rather than at the goal. This assumes `frame_id` is base-centric (the voxel
+    grid's own frame), so (0, 0) already tracks the base every cycle with no TF
+    lookup needed.
+
+    One CUBE_LIST tiles the grid_size x grid_size candidate grid at `floor_z`,
+    colored per-cell by Q, drawn `2*radius` across — the true footprint of the
+    sphere scored at each candidate, not the (much smaller) spacing between
+    candidates. At the default 0.30m radius vs. 0.10m spacing the 9 tiles
+    heavily overlap, same as the sphere markers this heatmap replaced; a denser
+    grid_size overlaps even more.
 
     A single CUBE_LIST is one draw call regardless of cell count — cheap on a
     Jetson's GPU today at 9 cells, and it stays cheap if the grid ever gets
     denser, unlike one Marker per cell.
 
     Args:
-        frame_id: str, frame the centers are expressed in
+        frame_id: str, base-centric frame the offsets are expressed in
         stamp: builtin_interfaces/Time for every marker header
-        center: (x, y, z) the grid is drawn around (the region's first center);
-            only x/y are used, z is replaced by `floor_z`
-        scores: sequence of 9 quality scores
+        scores: sequence of grid_size**2 quality scores
         gradient: (grad_x, grad_y)
-        offsets: 9 (offset_x, offset_y) tuples, in grid-index order
-        cell_size: float, tile edge length in meters — pass the same grid
-            spacing (delta) the offsets were built from, so tiles touch with no
-            gaps or overlap
+        offsets: grid_size**2 (offset_x, offset_y) tuples, in grid-index order
+        radius: float, radius in meters of the sphere that was actually scored
+            at each candidate (pass workspace_radius) — tiles are drawn 2*radius
+            across
         floor_z: float, z height (in frame_id) to draw the flat map at
         ns: marker namespace
 
     Returns:
         visualization_msgs/MarkerArray: id 0 the heatmap, id 1 the arrow
     """
+    n_candidates = len(scores)
     lo, hi = float(min(scores)), float(max(scores))
     span = (hi - lo) or 1.0
-    best = max(range(9), key=lambda i: float(scores[i]))
+    best = max(range(n_candidates), key=lambda i: float(scores[i]))
 
     array = MarkerArray()
 
@@ -59,14 +66,15 @@ def build_grid_markers(frame_id, stamp, center, scores, gradient, offsets,
     heat.type = Marker.CUBE_LIST
     heat.action = Marker.ADD
     heat.pose.orientation.w = 1.0
-    heat.scale.x = heat.scale.y = cell_size
+    heat.scale.x = heat.scale.y = 2.0 * radius
     heat.scale.z = 0.01
-    for i in range(9):
+    for i in range(n_candidates):
         ox, oy = offsets[i]
         t = (float(scores[i]) - lo) / span
-        heat.points.append(Point(x=center[0] + ox, y=center[1] + oy, z=floor_z))
+        heat.points.append(Point(x=ox, y=oy, z=floor_z))
+        # Red (worst) -> green (best), the standard low/high convention.
         heat.colors.append(ColorRGBA(
-            r=t, g=0.2, b=1.0 - t, a=1.0 if i == best else 0.7))
+            r=1.0 - t, g=t, b=0.0, a=1.0 if i == best else 0.7))
     array.markers.append(heat)
 
     gx, gy = gradient
@@ -81,10 +89,8 @@ def build_grid_markers(frame_id, stamp, center, scores, gradient, offsets,
     norm = math.hypot(gx, gy) or 1.0
     arrow_z = floor_z + 0.02  # clears the heatmap surface, avoids z-fighting
     arrow.points = [
-        Point(x=center[0], y=center[1], z=arrow_z),
-        Point(x=center[0] + 0.15 * gx / norm,
-              y=center[1] + 0.15 * gy / norm,
-              z=arrow_z),
+        Point(x=0.0, y=0.0, z=arrow_z),
+        Point(x=0.15 * gx / norm, y=0.15 * gy / norm, z=arrow_z),
     ]
     arrow.scale.x, arrow.scale.y, arrow.scale.z = 0.01, 0.02, 0.02
     arrow.color.r, arrow.color.g, arrow.color.b, arrow.color.a = 1.0, 1.0, 0.0, 0.9

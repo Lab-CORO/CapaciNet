@@ -27,6 +27,7 @@ ros2 launch capacitynet gradient_controller_mock.launch.py
 # With custom parameters
 ros2 launch capacitynet gradient_controller_mock.launch.py \
     grid_spacing:=0.15 \
+    grid_size:=5 \
     control_frequency:=2.0 \
     gain:=1.5 \
     workspace_radius:=0.40
@@ -48,12 +49,13 @@ ros2 topic echo /cmd_vel
 ### Monitor node logs
 
 The node logs detailed information at each iteration:
-- Quality scores for all 9 grid positions (3×3 layout)
+- Quality scores for all grid_size**2 grid positions (grid_size x grid_size
+  layout, default grid_size=3 -> 9 positions in a 3×3 layout)
 - Gradient components (∂Q/∂x, ∂Q/∂y)
 - Velocity command (vx, vy)
 - Magnitudes
 
-Example output:
+Example output (default grid_size=3):
 ```
 [INFO] [gradient_controller_mock]:
 ============================================================
@@ -68,9 +70,9 @@ Iteration 1
 [INFO] [gradient_controller_mock]:
 Quality Scores (9 positions):
   Grid layout:
-    0.234  0.245  0.231
-    0.243  0.250  0.238
-    0.229  0.242  0.225
+  0.2340  0.2450  0.2310
+  0.2430  0.2500  0.2380
+  0.2290  0.2420  0.2250
 
 [INFO] [gradient_controller_mock]:
 Gradient:
@@ -92,7 +94,8 @@ Published Twist message to /cmd_vel
 ## Pipeline Components Tested
 
 1. **ObstacleMapTransformer**
-   - Creates 9 transformed voxel maps (3×3 grid)
+   - Creates grid_size**2 transformed voxel maps (grid_size x grid_size grid,
+     default 3×3 -> 9)
    - Preserves static obstacles (if configured)
    - Applies transformations on GPU
 
@@ -101,7 +104,7 @@ Published Twist message to /cmd_vel
    - Tests the expected input format for the controller
 
 3. **GradientBasedController**
-   - Computes quality score Q for each of the 9 positions
+   - Computes quality score Q for each of the grid_size**2 positions
    - Calculates gradient ∇Q using central finite differences
    - Generates velocity command v = k · ∇Q
    - Applies velocity saturation

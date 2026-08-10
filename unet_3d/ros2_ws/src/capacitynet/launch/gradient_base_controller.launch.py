@@ -10,6 +10,9 @@ from launch_ros.actions import Node
 ARGUMENTS = [
     ('voxel_grid_topic', '/curobo_trajectory_planner/voxel_grid_sparse',
      'curobo_msgs/SparseVoxelGrid topic driving the control loop'),
+    ('cycle_period', '2.0',
+     'Seconds between inference cycles; the voxel grid subscription only caches '
+     'the latest message, a timer runs the cycle on it at this fixed cadence'),
     ('marker_topic', '/fiducial_markers',
      'FiducialMarkerArray topic providing the fallback workspace center'),
     ('goal_topic', '/curobo_trajectory_planner/mpc_goal',
@@ -18,7 +21,7 @@ ARGUMENTS = [
      'nav_msgs/Path whose tail is unioned with the goal sphere'),
     ('path_tail_samples', '4',
      'Number of path poses (from the end) added to the scored region; 0 = goal only'),
-    ('planning_frame', 'dsr01/world',
+    ('planning_frame', 'dsr01/base_link',
      'Frame assumed for goal_topic, which carries no header'),
     ('cmd_vel_topic', '/cmd_vel',
      'geometry_msgs/Twist topic commanding the mobile base'),
@@ -42,6 +45,10 @@ ARGUMENTS = [
      'arm-in-workspace interlock releases'),
     ('grid_spacing', '0.10',
      'Grid spacing delta in meters; also bounds travel between gradient updates'),
+    ('grid_size', '3',
+     'Number of candidate base positions per grid side (must be odd, >= 3); '
+     'total candidates = grid_size**2 (3 -> 9, 5 -> 25, 7 -> 49). Cost scales '
+     'linearly with candidate count — see OPTIMIZATIONS.md'),
 
     ('base_speed', '0.02',
      'Commanded speed ceiling in m/s (hardware-validated maximum)'),
@@ -54,7 +61,8 @@ ARGUMENTS = [
     ('gradient_taper_ref', '0.0',
      'Reference |grad Q| for the quadratic taper near the optimum; 0 disables it'),
     ('gradient_method', 'least_squares',
-     "Gradient stencil: 'least_squares' (all 9 maps) or 'central' (4 maps)"),
+     "Gradient stencil: 'least_squares' (all grid_size**2 maps) or 'central' "
+     '(4 nearest neighbors of center, regardless of grid_size)'),
 
     ('use_static_obstacles', 'false',
      'Load world-fixed obstacles from YAML so they are not translated with the base'),
@@ -87,9 +95,9 @@ ARGUMENTS = [
     ('log_timing', 'true',
      'Log gradient, velocity and cycle time each control cycle'),
     ('log_quality_scores', 'false',
-     'Log the 3x3 block of quality scores each control cycle'),
+     'Log the grid_size x grid_size block of quality scores each control cycle'),
     ('publish_debug_markers', 'true',
-     'Publish the 9 candidate scores and the gradient arrow as RViz markers'),
+     'Publish the grid_size**2 candidate scores and the gradient arrow as RViz markers'),
 ]
 
 # Topic remappings, not node parameters: WorkspaceRegionSource's TransformListener

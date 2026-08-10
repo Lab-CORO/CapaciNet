@@ -16,6 +16,12 @@ def generate_launch_description():
         description='Grid spacing delta in meters'
     )
 
+    grid_size_arg = DeclareLaunchArgument(
+        'grid_size',
+        default_value='3',
+        description='Number of candidate base positions per grid side (odd, >= 3)'
+    )
+
     control_frequency_arg = DeclareLaunchArgument(
         'control_frequency',
         default_value='1.0',
@@ -60,6 +66,7 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'grid_spacing': LaunchConfiguration('grid_spacing'),
+            'grid_size': LaunchConfiguration('grid_size'),
             'control_frequency': LaunchConfiguration('control_frequency'),
             'gain': LaunchConfiguration('gain'),
             'workspace_radius': LaunchConfiguration('workspace_radius'),
@@ -71,6 +78,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         grid_spacing_arg,
+        grid_size_arg,
         control_frequency_arg,
         gain_arg,
         workspace_radius_arg,

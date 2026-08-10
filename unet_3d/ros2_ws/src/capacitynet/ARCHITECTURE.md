@@ -19,16 +19,19 @@ uses is the fastest way to understand it:
 
 ## Per-cycle data flow
 
-What happens once per incoming voxel grid, in the componentized stack
-(`ReachabilityPipeline.on_voxel_grid`):
+What happens every `cycle_period` seconds (default 2.0s), on the latest cached
+voxel grid, in the componentized stack (`ReachabilityPipeline._on_timer`). The
+voxel grid subscription (`_on_voxel_grid`) only caches the newest message; a
+timer drives the actual cycle, decoupling the inference rate from whatever
+rate the voxel grid happens to publish at:
 
 ```mermaid
 flowchart LR
     VG["SparseVoxelGrid\n(curobo topic)"] --> PRE["ReachabilityEngine\n.preprocess()\nsparse → dense"]
-    PRE --> XFORM["ObstacleMapTransformer\n.generate_grid_transforms()\n3×3 shifted obstacle maps"]
+    PRE --> XFORM["ObstacleMapTransformer\n.generate_grid_transforms()\ngrid_size×grid_size shifted obstacle maps\n(default 3×3)"]
     XFORM --> PRED["ReachabilityEngine\n.predict_batch()\nTRT if configured, else PyTorch"]
     PRED --> MASK["WorkspaceEvaluation → VoxelMask\nregion_mask() over the union of spheres"]
-    MASK --> Q["9 × Q_i\n(VoxelMask.compute_mean)"]
+    MASK --> Q["grid_size² × Q_i\n(VoxelMask.compute_mean)"]
     Q --> GRAD["GradientBasedController\n.compute_gradient()\n∇Q by least-squares plane / central diff"]
     GRAD --> VEL["gradient_to_velocity()\ngain + saturation"]
     VEL --> SHAPE["BaseCommander.submit()\nadaptive cap, taper, deadband, interlocks"]
@@ -122,10 +125,13 @@ classDiagram
 
     class ReachabilityPipeline {
         +grid_spacing
+        +grid_size
+        +cycle_period
         +gradient_method
         +gate callback
         +on_result callback
-        +on_voxel_grid(msg)
+        -_on_voxel_grid(msg)
+        -_on_timer()
     }
 
     class BaseCommander {

@@ -50,7 +50,7 @@ class ReachabilityNode(Node):
         self.metrics_pub = self.create_publisher(ReachabilityMetrics, '/reachability_node/metrics', 10)
         self._metrics_frame_counter = 0
 
-        self.declare_parameter('point_cloud_frame_id', 'dsr01/world')
+        self.declare_parameter('point_cloud_frame_id', 'dsr01/base_link')
         self._pcd_frame_id = self.get_parameter('point_cloud_frame_id').value
 
         # Petit nuage (sous-échantillonné + seuil) -> RELIABLE, depth 1. Un publisher

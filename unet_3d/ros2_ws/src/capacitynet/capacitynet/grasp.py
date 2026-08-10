@@ -158,7 +158,7 @@ class ObjectGrasper(Node):
         self.declare_parameter('marker_avg_reset_gap', 1.0)  # s
 
         # Planning frame = curobo base_link (target_pose has no frame_id).
-        self.declare_parameter('planning_frame', 'dsr01/world')
+        self.declare_parameter('planning_frame', 'dsr01/base_link')
         # Unified "plan + execute" action: moves the arm to target_pose.
         self.declare_parameter('execute_action', '/curobo_trajectory_planner/execute_trajectory')
         # While execute_trajectory's reactive controller (MPC) is servoing toward
@@ -242,7 +242,7 @@ class ObjectGrasper(Node):
         # act_retract_arm (post-grasp lift) also uses MoveLine directly instead of
         # curobo. Not compliance-wrapped: this leaves contact and moves through
         # free space, so no need to absorb force error. ref=DR_BASE assumes
-        # planning_frame ('dsr01/world') is the robot's own base frame with Z up;
+        # planning_frame ('dsr01/base_link') is the robot's own base frame with Z up;
         # switch to DR_WORLD if your controller (M2.40+) defines a separate world
         # frame that this TF frame actually corresponds to.
         self.declare_parameter('lift_move_ref', DR_BASE)

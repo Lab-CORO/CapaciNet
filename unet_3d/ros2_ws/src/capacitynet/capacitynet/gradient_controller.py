@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Reachability quality score Q and its spatial gradient over a 3x3 candidate grid.
+"""Reachability quality score Q and its spatial gradient over an NxN candidate grid.
 
-ROS-free by design: this module turns 9 reachability maps into a *measurement*
+ROS-free by design: this module turns N*N reachability maps into a *measurement*
 (Q_i and grad Q). Turning that measurement into a velocity command — gain,
 saturation, taper, deadband — belongs to `base_commander`, so the same math can
 be reused by a probe node that never touches /cmd_vel.
@@ -17,14 +17,17 @@ from .workspace_evaluation import WorkspaceEvaluation
 
 class GradientBasedController:
     """
-    Reachability-gradient evaluator over a 3x3 grid of candidate base positions.
+    Reachability-gradient evaluator over an NxN grid of candidate base positions.
 
-    Computes the quality-score gradient from a 3x3 grid of reachability maps.
+    Computes the quality-score gradient from an NxN grid of reachability maps
+    (N = `grid_size`, odd, default 3 -> 9 candidates).
 
-    Grid layout (indices 0-8):
+    Grid layout for grid_size=3 (indices 0-8), the default:
         0: (-δ,+δ)   1: (0,+δ)   2: (+δ,+δ)
         3: (-δ, 0)   4: (0, 0)   5: (+δ, 0)    δ = grid spacing (default 0.10m)
         6: (-δ,-δ)   7: (0,-δ)   8: (+δ,-δ)
+    Larger odd grid_size extends the same lattice outward in steps of δ (see
+    grid_offsets); the center index is always n_candidates // 2.
 
     Each RM is computed in the robot base frame at that grid position.
     The workspace region moves relative to each base position.
@@ -37,29 +40,38 @@ class GradientBasedController:
 
     Gradient computation, selected by `gradient_method`:
 
-        'central'       central finite differences, the minimal 4-point stencil:
-                            ∂Q/∂x = (Q[5] - Q[3]) / (2δ)
-                            ∂Q/∂y = (Q[1] - Q[7]) / (2δ)
-                        Indices 0, 2, 6, 8 are inferred but never read.
+        'central'       central finite differences, the minimal 4-point stencil
+                        using only the center's 4 orthogonal neighbors (always
+                        ±δ away, regardless of grid_size):
+                            ∂Q/∂x = (Q[center+1] - Q[center-1]) / (2δ)
+                            ∂Q/∂y = (Q[center-N] - Q[center+N]) / (2δ)
+                        Every other candidate is inferred (inference cost is
+                        still paid for it) but never read — at grid_size>3 the
+                        outer ring has no effect on the commanded direction.
 
         'least_squares' least-squares fit of a plane Q ≈ c + gx·x + gy·y over all
-                        9 samples. The grid is symmetric (Σxᵢ = Σyᵢ = Σxᵢyᵢ = 0), so
-                        the normal equations decouple to a closed form:
-                            ∂Q/∂x = [(Q2+Q5+Q8) - (Q0+Q3+Q6)] / (6δ)
-                            ∂Q/∂y = [(Q0+Q1+Q2) - (Q6+Q7+Q8)] / (6δ)
-                        Exact for a locally planar Q (identical to 'central' in the
-                        noise-free case), but with 3x lower variance under iid noise
-                        on Q: σ²/(6δ²) vs σ²/(2δ²). Since the commanded direction is
-                        ∇Q/|∇Q|, that direction stability is what damps hunting near
-                        the optimum.
+                        N*N samples. Any odd square lattice centered at the
+                        origin is symmetric (Σxᵢ = Σyᵢ = Σxᵢyᵢ = 0), so the
+                        normal equations always decouple to a closed form:
+                            ∂Q/∂x = Σ(xᵢ·Qᵢ) / Σxᵢ²
+                            ∂Q/∂y = Σ(yᵢ·Qᵢ) / Σyᵢ²
+                        At grid_size=3 this is algebraically the classic
+                        [(Q2+Q5+Q8)-(Q0+Q3+Q6)]/(6δ) form (Σxᵢ²=6δ² there), just
+                        computed as a weighted sum so it generalizes to any N.
+                        Exact for a locally planar Q (identical to 'central' in
+                        the noise-free case at any grid_size), but with lower
+                        variance under iid noise on Q, and that variance keeps
+                        dropping as grid_size grows (more samples). Since the
+                        commanded direction is ∇Q/|∇Q|, that direction stability
+                        is what damps hunting near the optimum.
 
-    Either way the centre Q[4] carries zero weight — it sits at the origin, so it
+    Either way the centre carries zero weight — it sits at the origin, so it
     defines the value, not the slope. It is reported in debug_info for convergence
     logging.
     """
 
     def __init__(self, workspace_radius=0.30, grid_spacing=0.10, device='cuda',
-                 gradient_method='least_squares', path_radius=None):
+                 gradient_method='least_squares', path_radius=None, grid_size=3):
         """
         Initialize the gradient evaluator.
 
@@ -68,51 +80,63 @@ class GradientBasedController:
                 in meters (default: 0.30m)
             grid_spacing: float, spacing δ between grid points in meters (default: 0.10m)
             device: torch device ('cuda' or 'cpu')
-            gradient_method: 'least_squares' (default, uses all 9 maps) or 'central'
+            gradient_method: 'least_squares' (default, uses all N*N maps) or 'central'
             path_radius: float, radius of the path-tail spheres (region centres
                 1+) in meters. None (default) reuses workspace_radius, matching
                 the single-radius behavior before path_radius existed.
+            grid_size: int, odd, >= 3 (default: 3). Candidate grid is
+                grid_size x grid_size = n_candidates positions. Cost scales
+                linearly with n_candidates (see OPTIMIZATIONS.md) — grid_size=5
+                (25 candidates) costs ~2.5x today's default per cycle.
         """
         if gradient_method not in ('central', 'least_squares'):
             raise ValueError(
                 f"gradient_method must be 'central' or 'least_squares', got {gradient_method!r}"
             )
+        if grid_size < 3 or grid_size % 2 == 0:
+            raise ValueError(f'grid_size must be odd and >= 3, got {grid_size!r}')
 
         self.workspace_radius = workspace_radius
         self.path_radius = path_radius
         self.delta = grid_spacing
         self.device = device
         self.gradient_method = gradient_method
+        self.grid_size = grid_size
+        self.n_candidates = grid_size * grid_size
 
         # Workspace region: one or more centers in the world frame. A single
         # center is the ArTag/goal alone; several describe the union of spheres
         # around the goal plus the tail of the MPC path (see compute_quality_scores).
         self.workspace_centers_world = None
 
-        # Region evaluator for the untranslated (index 4) position. It owns the
+        # Region evaluator for the untranslated (center) position. It owns the
         # union mask and its cache, and is only rebuilt when the centers move, so
         # a static target rebuilds nothing between cycles.
         self._region_eval = None
 
-        # Set per cycle: True when the 9 masks were obtained by integer shifts of
-        # a single build, False when each had to be rebuilt (δ not a whole number
-        # of voxels). Surfaced in debug_info so the node can log it.
+        # Set per cycle: True when the n_candidates masks were obtained by integer
+        # shifts of a single build, False when each had to be rebuilt (δ not a
+        # whole number of voxels). Surfaced in debug_info so the node can log it.
         self.mask_shift_exact = None
 
-        # Indices for gradient computation (central differences)
-        self.idx_center = 4
-        self.idx_x_plus = 5   # (+δ, 0)
-        self.idx_x_minus = 3  # (-δ, 0)
-        self.idx_y_plus = 1   # (0, +δ)
-        self.idx_y_minus = 7  # (0, -δ)
+        # Indices for the 'central' 4-point stencil: the center's 4 orthogonal
+        # neighbors, always exactly ±δ away regardless of grid_size.
+        self.idx_center = self.n_candidates // 2
+        self.idx_x_plus = self.idx_center + 1        # (+δ, 0)
+        self.idx_x_minus = self.idx_center - 1        # (-δ, 0)
+        self.idx_y_plus = self.idx_center - grid_size  # (0, +δ)
+        self.idx_y_minus = self.idx_center + grid_size  # (0, -δ)
 
-        # Full columns/rows for the least-squares stencil. Column index maps to x
-        # (col 0 = -δ, col 2 = +δ), row index maps to y (row 0 = +δ, row 2 = -δ) —
-        # same convention as grid_offsets and ObstacleMapTransformer.
-        self.idx_col_x_plus = (2, 5, 8)
-        self.idx_col_x_minus = (0, 3, 6)
-        self.idx_row_y_plus = (0, 1, 2)
-        self.idx_row_y_minus = (6, 7, 8)
+        # Cached offset tensors for the 'least_squares' weighted-sum gradient
+        # (see grid_offsets and the class docstring). Static given grid_size and
+        # delta, so built once here rather than every evaluate() call.
+        offsets = self.grid_offsets()
+        self._offset_x = torch.tensor(
+            [o[0] for o in offsets], dtype=torch.float32, device=device)
+        self._offset_y = torch.tensor(
+            [o[1] for o in offsets], dtype=torch.float32, device=device)
+        self._sum_offset_x2 = float((self._offset_x ** 2).sum())
+        self._sum_offset_y2 = float((self._offset_y ** 2).sum())
 
     def update_workspace_center(self, workspace_center_xyz):
         """
@@ -154,17 +178,20 @@ class GradientBasedController:
 
     def grid_offsets(self):
         """
-        The 9 base-position offsets of the candidate grid, in meters.
+        The n_candidates base-position offsets of the candidate grid, in meters.
 
         Returns:
-            list: 9 tuples (offset_x, offset_y), in grid-index order 0..8
+            list: n_candidates tuples (offset_x, offset_y), in grid-index order
+                0..n_candidates-1 (row-major, top to bottom, left to right)
         """
+        n = self.grid_size
+        half = n // 2
         offsets = []
-        for index in range(9):
-            row = index // 3  # 0, 1, 2 (top to bottom)
-            col = index % 3   # 0, 1, 2 (left to right)
-            offsets.append(((col - 1) * self.delta,   # -δ, 0, +δ
-                            (1 - row) * self.delta))  # +δ, 0, -δ
+        for index in range(n * n):
+            row = index // n  # 0..n-1 (top to bottom)
+            col = index % n   # 0..n-1 (left to right)
+            offsets.append(((col - half) * self.delta,   # -half*δ .. +half*δ
+                            (half - row) * self.delta))  # +half*δ .. -half*δ
         return offsets
 
     def _get_region_centers_for_rm(self, rm_index):
@@ -175,7 +202,7 @@ class GradientBasedController:
         alike — moves by (-offset_x, -offset_y) in the base frame.
 
         Args:
-            rm_index: int, index of the reachability map (0-8)
+            rm_index: int, index of the reachability map (0..n_candidates-1)
 
         Returns:
             list: (x, y, z) centers in the RM reference frame
@@ -190,25 +217,27 @@ class GradientBasedController:
 
     def compute_quality_scores(self, reachability_maps, vg_info):
         """
-        Compute quality scores Q for all 9 reachability maps.
+        Compute quality scores Q for all n_candidates reachability maps.
 
         Q_i is the mean reachability over the union of the region spheres,
         expressed in RM i's reference frame. Overlapping spheres are covered
         once, so Q is the mean over the swept volume, not an average of
         per-center means.
 
-        The 9 regions are the same shape translated by the grid offsets. When δ
-        spans a whole number of voxels (δ=0.10 m at 0.02 m resolution -> 5) they
-        are exact integer translations, so the union is built once and shifted —
-        N sphere constructions per cycle instead of 9·N. Otherwise each region is
-        rebuilt from its own centers, which is slower but exact for any δ.
+        The n_candidates regions are the same shape translated by the grid
+        offsets. When δ spans a whole number of voxels (δ=0.10 m at 0.02 m
+        resolution -> 5) they are exact integer translations, so the union is
+        built once and shifted — N sphere constructions per cycle instead of
+        n_candidates·N. Otherwise each region is rebuilt from its own centers,
+        which is slower but exact for any δ.
 
         Args:
-            reachability_maps: torch.Tensor, shape (9, size_x, size_y, size_z) on GPU
+            reachability_maps: torch.Tensor, shape (n_candidates, size_x, size_y,
+                size_z) on GPU
             vg_info: dict with keys 'origin', 'resolution', 'size_x', 'size_y', 'size_z'
 
         Returns:
-            torch.Tensor: Quality scores, shape (9,), on GPU
+            torch.Tensor: Quality scores, shape (n_candidates,), on GPU
         """
         if self._region_eval is None:
             raise RuntimeError(
@@ -222,9 +251,10 @@ class GradientBasedController:
         base_mask = self._region_eval.region_mask(**vg_info) if self.mask_shift_exact else None
         offsets = self.grid_offsets()
 
-        scores = torch.zeros(9, dtype=reachability_maps.dtype, device=self.device)
+        scores = torch.zeros(
+            self.n_candidates, dtype=reachability_maps.dtype, device=self.device)
 
-        for i in range(9):
+        for i in range(self.n_candidates):
             if base_mask is not None:
                 offset_x, offset_y = offsets[i]
                 di = -int(round(offset_x / resolution))
@@ -243,38 +273,58 @@ class GradientBasedController:
 
     def compute_gradient(self, scores):
         """
-        Compute the spatial gradient ∇Q from the 9 quality scores.
+        Compute the spatial gradient ∇Q from the n_candidates quality scores.
 
         Uses the stencil selected by `gradient_method` (see the class docstring).
 
         Args:
-            scores: torch.Tensor, shape (9,), quality scores on GPU
+            scores: torch.Tensor, shape (n_candidates,), quality scores on GPU
 
         Returns:
             tuple: (grad_x, grad_y) gradient components (float)
         """
+        if len(scores) != self.n_candidates:
+            raise ValueError(
+                f'scores has length {len(scores)}, expected n_candidates='
+                f'{self.n_candidates} (grid_size={self.grid_size})')
+
         if self.gradient_method == 'central':
-            # Minimal 4-point stencil; diagonals unused.
+            # Minimal 4-point stencil; every other candidate unused.
             grad_x = (scores[self.idx_x_plus] - scores[self.idx_x_minus]) / (2 * self.delta)
             grad_y = (scores[self.idx_y_plus] - scores[self.idx_y_minus]) / (2 * self.delta)
         else:
-            # Least-squares plane fit over all 9 samples. Σxᵢ² = Σyᵢ² = 6δ² on this
-            # grid, hence the 6δ denominator.
-            grad_x = (sum(scores[i] for i in self.idx_col_x_plus)
-                      - sum(scores[i] for i in self.idx_col_x_minus)) / (6 * self.delta)
-            grad_y = (sum(scores[i] for i in self.idx_row_y_plus)
-                      - sum(scores[i] for i in self.idx_row_y_minus)) / (6 * self.delta)
+            # General weighted least-squares plane fit (see class docstring):
+            # grad_x = Σ(xᵢ·Qᵢ)/Σxᵢ², grad_y = Σ(yᵢ·Qᵢ)/Σyᵢ² — valid for any odd
+            # square lattice centered at the origin, not just grid_size=3.
+            grad_x = torch.sum(self._offset_x * scores) / self._sum_offset_x2
+            grad_y = torch.sum(self._offset_y * scores) / self._sum_offset_y2
 
         return grad_x.item(), grad_y.item()
 
+    def format_scores(self, scores):
+        """Format the n_candidates quality scores as a grid_size x grid_size block.
+
+        Args:
+            scores: sequence of n_candidates quality scores, row-major (see
+                grid_offsets)
+
+        Returns:
+            str: multi-line, 2-space indented, 4-decimal block
+        """
+        n = self.grid_size
+        rows = ['  ' + '  '.join(f'{float(scores[r * n + c]):.4f}' for c in range(n))
+                for r in range(n)]
+        return '\n'.join(rows)
+
     def evaluate(self, reachability_maps, vg_info):
         """
-        Score the 9 candidate positions and fit the gradient.
+        Score the n_candidates candidate positions and fit the gradient.
 
         This is a measurement, not a command: no gain, no saturation, no message.
 
         Args:
-            reachability_maps: torch.Tensor, shape (9, size_x, size_y, size_z) on GPU
+            reachability_maps: torch.Tensor, shape (n_candidates, size_x, size_y,
+                size_z) on GPU
             vg_info: dict with voxel grid parameters
 
         Returns:
