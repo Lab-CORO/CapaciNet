@@ -2,6 +2,9 @@
 <CycloneDDS xmlns="https://cdds.io/config" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="https://cdds.io/config https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd">
     <Domain Id="any">
         <General>
+            <Interfaces>
+                <NetworkInterface autodetermine="false" name="wlp4s0" />
+            </Interfaces>
             <AllowMulticast>false</AllowMulticast>
             <MaxMessageSize>65500B</MaxMessageSize>
         </General>
@@ -11,8 +14,9 @@
             <MaxAutoParticipantIndex>50</MaxAutoParticipantIndex>
             <Peers>
                 <Peer Address="192.168.50.163"/>
-                <Peer Address="192.168.50.65"/>
+                <Peer Address="192.168.50.12"/>
                 <Peer Address="127.0.0.1"/>
+                <Peer Address="192.168.0.146"/>
             </Peers>
         </Discovery>
         <Internal>

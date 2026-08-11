@@ -32,8 +32,8 @@ from tf2_geometry_msgs import do_transform_pose_stamped
 import tf2_ros
 from tf2_ros import Buffer, TransformListener
 
-from .reachability_engine import ReachabilityEngine
-from .workspace_evaluation import WorkspaceEvaluation
+from capacitynet.rm_model.reachability_engine import ReachabilityEngine
+from capacitynet.control.scripts.workspace_evaluation import WorkspaceEvaluation
 
 # Headless-safe backend switch (the node has no display); done after the
 # import block so it stays a normal statement rather than splitting the

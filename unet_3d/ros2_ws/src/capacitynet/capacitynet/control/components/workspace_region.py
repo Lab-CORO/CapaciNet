@@ -25,8 +25,8 @@ import tf2_ros
 from tf2_ros import Buffer, TransformListener
 from visualization_msgs.msg import MarkerArray
 
-from .grid_markers import build_region_markers
-from .node_component import NodeComponent
+from capacitynet.control.scripts.grid_markers import build_region_markers
+from capacitynet.control.components.node_component import NodeComponent
 
 
 class WorkspaceRegionSource(NodeComponent):

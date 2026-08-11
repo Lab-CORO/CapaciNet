@@ -1,188 +1,114 @@
-# ============================================================================
-# Image de base: ROS2 Humble avec Python 3.10 (meilleure compatibilité)
-# ============================================================================
-FROM osrf/ros:humble-desktop
+FROM curobo_ros:x86-jazzy
 
-# Éviter les prompts interactifs
+# ── Base: curobo_ros:x86-jazzy (CUDA / Ubuntu 24.04 Noble / Python 3.12)
+# Déjà disponible dans la base :
+#   Python 3.12, PyTorch + CUDA (NVIDIA NGC), CuRobo, numpy 1.26.4,
+#   ROS2 Jazzy + ros-jazzy-*, TensorRT (fourni par l'image NVIDIA — pas
+#   besoin de le réinstaller comme sur Jetson/CSV)
+
+LABEL maintainer="Lab-CORO"
+LABEL description="CapacityNet Reachability Node — ROS2 Jazzy + PyTorch (x86)"
+LABEL ros.distro="jazzy"
+LABEL python.version="3.12"
+
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=America/Montreal
 
-# ============================================================================
-# ÉTAPE 1: Installation des dépendances système
-# ============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
+# ÉTAPE 1 — Dépendances Python CapacityNet
+# open3d/numpy/scipy sont déjà dans la base — on installe uniquement ce qui manque.
+# ═══════════════════════════════════════════════════════════════════════════════
+RUN pip3 install --no-cache-dir \
+    h5py \
+    scikit-image \
+    tensorboard \
+    pyyaml \
+    "empy==3.3.4" \
+    lark \
+    catkin_pkg
 
-RUN apt-get update && apt-get install -y \
-    python3-pip \
-    python3-dev \
-    git \
-    wget \
-    curl \
-    vim \
-    nano \
+# ═══════════════════════════════════════════════════════════════════════════════
+# ÉTAPE 2 — pytorch-3dunet (installation depuis les sources)
+#
+# CRITIQUE : --no-deps est OBLIGATOIRE. pytorch-3dunet déclare `torch` et
+# `torchvision` en dépendances ; sans --no-deps, pip télécharge un wheel torch
+# générique de PyPI et ÉCRASE le PyTorch CUDA de la base image.
+# Toutes les vraies deps sont déjà présentes :
+#   torch (base) · numpy/scipy (base) · h5py/scikit-image/tensorboard (ÉTAPE 1)
+#   torchvision : déclaré mais jamais importé par le code → non installé.
+# ═══════════════════════════════════════════════════════════════════════════════
+RUN git clone --depth=1 https://github.com/wolny/pytorch-3dunet.git /tmp/pytorch-3dunet && \
+    cd /tmp/pytorch-3dunet && \
+    SETUPTOOLS_SCM_PRETEND_VERSION=1.0.0 pip3 install --no-cache-dir --no-build-isolation --ignore-requires-python --no-deps . && \
+    rm -rf /tmp/pytorch-3dunet
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ÉTAPE 3 — Re-pin numpy<2
+# pytorch-3dunet ou ses dépendances peuvent remonter numpy 2.x.
+# La base curobo_ros:x86-jazzy pin numpy==1.26.4 (compat numba/cupy) — doit rester <2.
+# ═══════════════════════════════════════════════════════════════════════════════
+RUN pip3 install --no-cache-dir "numpy<2"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ÉTAPE 4 — Workspace ROS2 CapacityNet
+# ═══════════════════════════════════════════════════════════════════════════════
+RUN mkdir -p /workspace/capacitynet/ros2_ws/src
+WORKDIR /workspace/capacitynet/ros2_ws/src
+
+RUN git clone https://github.com/Lab-CORO/curobo_msgs.git
+
+# reachability_map_visualizer : dépendance de capacitynet (package.xml).
+# Requis pour le colcon build de capacitynet monté au runtime (mode DEV).
+RUN git clone https://github.com/Lab-CORO/reachability_map_visualizer.git
+
+# Deps système de reachability_map_visualizer (plugin RViz Qt + HDF5).
+# rviz2/rviz_common/rviz_rendering/pluginlib viennent de ros-jazzy-desktop (base).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    qtbase5-dev libhdf5-dev \
     && rm -rf /var/lib/apt/lists/*
-
-# Installer packages ROS2 supplémentaires
-RUN apt-get update && apt-get install -y \
-    ros-humble-nav2-msgs \
-    ros-humble-rmw-cyclonedds-cpp \
-    ros-humble-cyclonedds \
-    python3-colcon-common-extensions \
-    && rm -rf /var/lib/apt/lists/*
-
-# Configuration ROS2
-ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-
-# ============================================================================
-# ÉTAPE 2: Installation de Miniconda
-# ============================================================================
-
-# Installer Miniconda
-RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda.sh && \
-    /bin/bash ~/miniconda.sh -b -p /opt/conda && \
-    rm ~/miniconda.sh && \
-    /opt/conda/bin/conda clean --all -y && \
-    ln -s /opt/conda/etc/profile.d/conda.sh /etc/profile.d/conda.sh
-
-# Configurer conda pour qu'il soit accessible
-ENV PATH=/opt/conda/bin:$PATH
-
-# Initialiser conda
-RUN conda init bash
-
-# Accepter les termes de service Anaconda
-RUN conda config --set allow_conda_downgrades true && \
-    conda config --set channel_priority flexible && \
-    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main && \
-    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
-
-# ============================================================================
-# ÉTAPE 3: Création de l'environnement conda 'ros2_torch'
-# ============================================================================
-
-# Créer un environnement conda dédié avec Python 3.10 (compatible ROS2)
-RUN conda create -n ros2_torch python=3.10 -y
-
-# Activer l'environnement et installer PyTorch avec CUDA 12.4 support
-RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
-    conda activate ros2_torch && \
-    pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cu124"
-
-# ============================================================================
-# ÉTAPE 4: Installation des dépendances ML et ROS2 Python
-# ============================================================================
-
-# Installer open3d et autres dépendances Python
-RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
-    conda activate ros2_torch && \
-    pip install --no-cache-dir \
-        open3d \
-        pyyaml \
-        empy==3.3.4 \
-        lark \
-        catkin_pkg \
-        h5py \
-        scikit-image \
-        tensorboard"
-
-# Installer pytorch-3dunet via conda (sans dépendances pour éviter les conflits)
-RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
-    conda activate ros2_torch && \
-    conda install -c conda-forge pytorch-3dunet --no-deps -y && \
-    conda clean -a -y"
-
-# Configurer PYTHONPATH pour que ROS2 trouve les packages conda
-ENV PYTHONPATH=/opt/conda/envs/ros2_torch/lib/python3.10/site-packages
-
-# ============================================================================
-# ÉTAPE 5: Setup du workspace ROS2
-# ============================================================================
-
-# Créer la structure du workspace
-WORKDIR /workspace/capacitynet
-RUN mkdir -p ros2_ws/src
-
-# Cloner curobo_msgs
-RUN cd ros2_ws/src && \
-    git clone https://github.com/Lab-CORO/curobo_msgs.git
 
 # Copier le code capacitynet (décommenter pour build)
 # COPY ./ros2_ws/src/capacitynet /workspace/capacitynet/ros2_ws/src/capacitynet
-# COPY ./config /workspace/capacitynet/config
 
-# Compiler le workspace ROS2 (utiliser le Python système, pas celui de conda)
-RUN bash -c "source /opt/ros/humble/setup.bash && \
-    cd /workspace/capacitynet/ros2_ws && \
-    PATH=/usr/bin:$PATH colcon build --symlink-install"
+WORKDIR /workspace/capacitynet/ros2_ws
+RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
+    colcon build --symlink-install"
 
-# ============================================================================
-# ÉTAPE 6: Configuration de l'environnement
-# ============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
+# ÉTAPE 4b — RMW : Cyclone DDS (remplace FastDDS)
+# Meilleur comportement sur gros messages (PointCloud2 reachability_map) et config
+# plus simple. DOIT être identique sur TOUT le graphe ROS (capacitynet + leeloo),
+# sinon capacitynet ne reçoit plus /curobo_trajectory_planner/voxel_grid_sparse.
+# ═══════════════════════════════════════════════════════════════════════════════
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ros-jazzy-rmw-cyclonedds-cpp \
+    && rm -rf /var/lib/apt/lists/*
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 
-# Créer le script d'entrée
-RUN echo '#!/bin/bash\n\
-set -e\n\
-\n\
-# Initialiser et activer conda\n\
-source /opt/conda/etc/profile.d/conda.sh\n\
-conda activate ros2_torch\n\
-\n\
-# Sourcer ROS2\n\
-source /opt/ros/humble/setup.bash\n\
-source /workspace/capacitynet/ros2_ws/install/setup.bash 2>/dev/null || true\n\
-\n\
-# Variables d'\''environnement pour PyTorch/CUDA\n\
-export CUDA_LAUNCH_BLOCKING=0\n\
-export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512\n\
-export TORCH_USE_RTLD_GLOBAL=1\n\
-export PYTHONPATH=/opt/conda/envs/ros2_torch/lib/python3.10/site-packages:$PYTHONPATH\n\
-\n\
-# Afficher les informations\n\
-echo "========================================"\n\
-echo "🤖 CapacityNet ROS2 Environment"\n\
-echo "========================================"\n\
-echo "Conda Environment: ros2_torch"\n\
-echo "ROS2 Distro: $(printenv ROS_DISTRO)"\n\
-echo "Python: $(python --version)"\n\
-echo "Conda: $(conda --version)"\n\
-python -c "import torch; print(f'\''PyTorch: {torch.__version__}'\'')" 2>/dev/null || echo "PyTorch: Not loaded yet"\n\
-python -c "import torch; print(f'\''CUDA Available: {torch.cuda.is_available()}'\'')" 2>/dev/null || true\n\
-python -c "from pytorch3dunet.unet3d import UNet3D; print('\''✅ pytorch-3dunet importé avec succès'\'')" 2>/dev/null || echo "⚠️  pytorch-3dunet: erreur d'\''import"\n\
-echo "========================================"\n\
-echo ""\n\
-\n\
-exec "$@"\n\
-' > /workspace/entrypoint.sh && chmod +x /workspace/entrypoint.sh
+# ═══════════════════════════════════════════════════════════════════════════════
+# ÉTAPE 5 — Entrypoint (sans conda — Python 3.12 global hérité de la base)
+# ═══════════════════════════════════════════════════════════════════════════════
+RUN printf '#!/bin/bash\nset -e\nsource /opt/ros/jazzy/setup.bash\nsource /workspace/capacitynet/ros2_ws/install/setup.bash 2>/dev/null || true\nexport CUDA_LAUNCH_BLOCKING=0\nexport PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512\necho "========================================"\necho "CapacityNet ROS2 Environment (x86)"\necho "========================================"\necho "ROS2 Distro: $(printenv ROS_DISTRO)"\necho "Python: $(python3 --version)"\npython3 -c "import torch; print('"'"'PyTorch: '"'"' + torch.__version__)" 2>/dev/null || echo "PyTorch: not loaded"\npython3 -c "import torch; print('"'"'CUDA Available: '"'"' + str(torch.cuda.is_available()))" 2>/dev/null || true\npython3 -c "from pytorch3dunet.unet3d import model; print('"'"'pytorch-3dunet: OK'"'"')" 2>/dev/null || echo "pytorch-3dunet: import error"\necho "========================================"\nexec "$@"\n' > /workspace/entrypoint.sh && chmod +x /workspace/entrypoint.sh
 
-# Créer un script de lancement pour le nœud reachability
-RUN echo '#!/bin/bash\n\
-echo "🚀 Lancement du nœud CapacityNet Reachability..."\n\
-python3 /workspace/capacitynet/ros2_ws/src/capacitynet/capacitynet/capacitynet.py\n\
-' > /workspace/launch_node.sh && chmod +x /workspace/launch_node.sh
+# ═══════════════════════════════════════════════════════════════════════════════
+# ÉTAPE 6 — Scripts utilitaires
+# ═══════════════════════════════════════════════════════════════════════════════
+RUN printf '#!/bin/bash\necho "Recompilation du workspace ROS2..."\ncd /workspace/capacitynet/ros2_ws\nsource /opt/ros/jazzy/setup.bash\ncolcon build --symlink-install\necho "Compilation terminee!"\n' > /workspace/rebuild.sh && chmod +x /workspace/rebuild.sh
 
-# Créer un script de recompilation rapide
-RUN echo '#!/bin/bash\n\
-echo "🔨 Recompilation du workspace ROS2..."\n\
-cd /workspace/capacitynet/ros2_ws\n\
-source /opt/ros/humble/setup.bash\n\
-PATH=/usr/bin:$PATH colcon build --symlink-install\n\
-echo "✅ Compilation terminée!"\n\
-' > /workspace/rebuild.sh && chmod +x /workspace/rebuild.sh
+RUN printf '#!/bin/bash\necho "Lancement du noeud CapacityNet Reachability..."\npython3 /workspace/capacitynet/ros2_ws/src/capacitynet/capacitynet/capacitynet.py\n' > /workspace/launch_node.sh && chmod +x /workspace/launch_node.sh
 
-# Configurer .bashrc pour sourcer automatiquement
-RUN echo 'source /opt/conda/etc/profile.d/conda.sh' >> ~/.bashrc && \
-    echo 'conda activate ros2_torch' >> ~/.bashrc && \
-    echo 'source /opt/ros/humble/setup.bash' >> ~/.bashrc && \
+# ═══════════════════════════════════════════════════════════════════════════════
+# ÉTAPE 7 — .bashrc
+# ═══════════════════════════════════════════════════════════════════════════════
+RUN echo 'source /opt/ros/jazzy/setup.bash' >> ~/.bashrc && \
     echo 'source /workspace/capacitynet/ros2_ws/install/setup.bash 2>/dev/null || true' >> ~/.bashrc && \
     echo 'export CUDA_LAUNCH_BLOCKING=0' >> ~/.bashrc && \
     echo 'export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512' >> ~/.bashrc && \
-    echo 'export PYTHONPATH=/opt/conda/envs/ros2_torch/lib/python3.10/site-packages:$PYTHONPATH' >> ~/.bashrc && \
-    echo 'export PS1="\[\e[32m\](ros2_torch)\[\e[0m\] \[\e[34m\]\w\[\e[0m\]\$ "' >> ~/.bashrc && \
+    echo 'export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp' >> ~/.bashrc && \
+    echo 'export ROS_DOMAIN_ID=0' >> ~/.bashrc && \
+    echo 'export CYCLONEDDS_URI=/workspace/capacitynet/ros2_ws/src/capacitynet/config/profile.xml' >> ~/.bashrc && \
     echo 'alias rebuild="/workspace/rebuild.sh"' >> ~/.bashrc && \
     echo 'alias launch="/workspace/launch_node.sh"' >> ~/.bashrc
-
-# ============================================================================
-# ÉTAPE 7: Configuration finale
-# ============================================================================
 
 WORKDIR /workspace/capacitynet
 
@@ -190,46 +116,32 @@ ENTRYPOINT ["/workspace/entrypoint.sh"]
 CMD ["/bin/bash"]
 
 # ============================================================================
-# METADATA ET DOCUMENTATION
+# UTILISATION
 # ============================================================================
 
-LABEL maintainer="Lab-CORO"
-LABEL description="ROS2 Humble + PyTorch + CUDA - CapacityNet Reachability Node"
-LABEL ros.distro="humble"
-LABEL pytorch.version="2.6.0"
-LABEL python.version="3.10"
-LABEL cuda.version="12.4"
-
-
-# ============================================================================
-# INSTRUCTIONS D'UTILISATION
-# ============================================================================
+# 🏗️  PRÉREQUIS : builder l'image de base curobo_ros:x86-jazzy
+#   docker build -f src/curobo_ros/docker/x86_jazzy.dockerfile \
+#     -t curobo_ros:x86-jazzy .
 
 # 🏗️  CONSTRUCTION:
 #   docker build -f Dockerfile -t capacitynet:latest .
 
 # 🚀 LANCEMENT INTERACTIF:
 #   docker run -it --gpus all \
-#     -v $(pwd):/workspace/capacitynet \
-#     -v /tmp/.X11-unix:/tmp/.X11-unix \
-#     -e DISPLAY=$DISPLAY \
+#     -v $(pwd)/ros2_ws/src/capacitynet:/workspace/capacitynet/ros2_ws/src/capacitynet \
 #     --network host \
 #     capacitynet:latest
 
 # 🤖 LANCER LE NŒUD DIRECTEMENT:
 #   docker run --rm -it --gpus all \
-#     -v $(pwd):/workspace/capacitynet \
+#     -v $(pwd)/ros2_ws/src/capacitynet:/workspace/capacitynet/ros2_ws/src/capacitynet \
 #     --network host \
 #     capacitynet:latest /workspace/launch_node.sh
 #
 # 🔨 RECOMPILER LE WORKSPACE (après modifications):
 #   docker run --rm -it --gpus all \
-#     -v $(pwd):/workspace/capacitynet \
+#     -v $(pwd)/ros2_ws/src/capacitynet:/workspace/capacitynet/ros2_ws/src/capacitynet \
 #     capacitynet:latest /workspace/rebuild.sh
-#
-# 📊 TESTER L'ENVIRONNEMENT:
-#   docker run --rm -it --gpus all capacitynet:latest \
-#     python3 -c "import torch; import rclpy; print('✅ OK')"
 #
 # DANS LE CONTENEUR:
 #   rebuild    # Recompiler le workspace

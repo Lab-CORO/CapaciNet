@@ -22,11 +22,11 @@ from curobo_msgs.msg import SparseVoxelGrid
 from std_msgs.msg import Float32MultiArray
 from visualization_msgs.msg import MarkerArray
 
-from .gradient_controller import GradientBasedController
-from .grid_markers import build_grid_markers
-from .node_component import NodeComponent
-from .obstacle_transformer import ObstacleMapTransformer
-from .reachability_engine import ReachabilityEngine
+from capacitynet.control.scripts.gradient_controller import GradientBasedController
+from capacitynet.control.scripts.grid_markers import build_grid_markers
+from capacitynet.control.components.node_component import NodeComponent
+from capacitynet.control.scripts.obstacle_transformer import ObstacleMapTransformer
+from capacitynet.rm_model.reachability_engine import ReachabilityEngine
 
 
 @dataclass

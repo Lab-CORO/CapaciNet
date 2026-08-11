@@ -21,8 +21,8 @@ from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
 
-from .reachability_pipeline import ReachabilityPipeline
-from .workspace_region import WorkspaceRegionSource
+from capacitynet.control.components.reachability_pipeline import ReachabilityPipeline
+from capacitynet.control.components.workspace_region import WorkspaceRegionSource
 
 
 class WorkspaceProbe(Node):
