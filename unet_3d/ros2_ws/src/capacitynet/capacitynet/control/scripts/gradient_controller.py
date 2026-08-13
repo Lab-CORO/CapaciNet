@@ -108,6 +108,11 @@ class GradientBasedController:
         # center is the ArTag/goal alone; several describe the union of spheres
         # around the goal plus the tail of the MPC path (see compute_quality_scores).
         self.workspace_centers_world = None
+        # Whether index 0 of workspace_centers_world is a true goal (gets
+        # workspace_radius) or a path-tail point standing in for it when no
+        # fresh mpc_goal exists (gets path_radius like the rest) — mirrors
+        # WorkspaceRegionSource.region_has_goal, set via update_workspace_region.
+        self._region_has_goal = True
 
         # Region evaluator for the untranslated (center) position. It owns the
         # union mask and its cache, and is only rebuilt when the centers move, so
@@ -118,6 +123,13 @@ class GradientBasedController:
         # shifts of a single build, False when each had to be rebuilt (δ not a
         # whole number of voxels). Surfaced in debug_info so the node can log it.
         self.mask_shift_exact = None
+
+        # The n_candidates VoxelMask instances used by the most recent
+        # compute_quality_scores() call, in candidate order. Not consumed here —
+        # kept only so a debug consumer (ControlDebugLogger's reachability-map
+        # dump) can save exactly the region mask that scored each candidate,
+        # without rebuilding it.
+        self.last_masks = None
 
         # Indices for the 'central' 4-point stencil: the center's 4 orthogonal
         # neighbors, always exactly ±δ away regardless of grid_size.
@@ -147,7 +159,7 @@ class GradientBasedController:
         """
         self.update_workspace_region([workspace_center_xyz])
 
-    def update_workspace_region(self, centers_xyz):
+    def update_workspace_region(self, centers_xyz, has_goal_center=True):
         """
         Update the workspace region as a set of sphere centers in the world frame.
 
@@ -155,26 +167,37 @@ class GradientBasedController:
         region covering the goal plus the last few MPC path poses scores the
         approach corridor the arm actually traverses rather than the tag alone.
 
-        The region evaluator is only rebuilt when the centers actually move,
-        preserving its mask cache across cycles with a static target.
+        The region evaluator is only rebuilt when the centers (or has_goal_center)
+        actually change, preserving its mask cache across cycles with a static
+        target.
 
         Args:
             centers_xyz: iterable of (x, y, z) tuples in meters
+            has_goal_center: whether centers[0] is a true goal (gets
+                workspace_radius) or a path-tail point standing in for it
+                (gets path_radius like the rest) — see
+                WorkspaceRegionSource.region_has_goal, which this normally
+                mirrors 1:1.
         """
         centers = [tuple(float(v) for v in c) for c in centers_xyz]
         if not centers:
             raise ValueError('Workspace region needs at least one center')
-        if centers != self.workspace_centers_world:
+        if centers != self.workspace_centers_world or has_goal_center != self._region_has_goal:
             self.workspace_centers_world = centers
+            self._region_has_goal = has_goal_center
             self._region_eval = WorkspaceEvaluation(
                 centers, self._radii_for(centers), self.device)
 
     def _radii_for(self, centers):
         """Per-centre radii: workspace_radius for the goal (index 0), path_radius
-        (or workspace_radius if unset) for every path-tail centre.
+        (or workspace_radius if unset) for every path-tail centre. When the
+        region has no true goal (has_goal_center=False), every centre gets
+        path_radius, including index 0.
         """
         path_r = self.path_radius if self.path_radius is not None else self.workspace_radius
-        return [self.workspace_radius] + [path_r] * (len(centers) - 1)
+        if self._region_has_goal:
+            return [self.workspace_radius] + [path_r] * (len(centers) - 1)
+        return [path_r] * len(centers)
 
     def grid_offsets(self):
         """
@@ -253,6 +276,7 @@ class GradientBasedController:
 
         scores = torch.zeros(
             self.n_candidates, dtype=reachability_maps.dtype, device=self.device)
+        masks = []
 
         for i in range(self.n_candidates):
             if base_mask is not None:
@@ -268,7 +292,9 @@ class GradientBasedController:
                 ).region_mask(**vg_info)
 
             scores[i] = mask.compute_mean(reachability_maps[i])
+            masks.append(mask)
 
+        self.last_masks = masks
         return scores
 
     def compute_gradient(self, scores):

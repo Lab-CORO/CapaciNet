@@ -18,6 +18,8 @@ plotting node) does the same and simply never instantiates a BaseCommander.
 from dataclasses import dataclass, field
 import time
 
+import numpy as np
+
 from curobo_msgs.msg import SparseVoxelGrid
 from std_msgs.msg import Float32MultiArray
 from visualization_msgs.msg import MarkerArray
@@ -99,10 +101,24 @@ class ReachabilityPipeline(NodeComponent):
         self.gate = lambda: True
         # Called with a GradientResult once a cycle completes.
         self.on_result = None
+        # Called with a short reason string when a cycle is skipped before
+        # inference runs (gate closed, no voxel grid yet, region unresolved, or
+        # the region doesn't fit the grid) — see _on_timer. Never called for a
+        # failure *during* inference; only for these known, expected early-outs.
+        self.on_skip = None
 
         # Latest voxel grid message, cached by the subscription callback and
         # consumed by the timer. None until the first message arrives.
         self._latest_msg = None
+
+        # CPU numpy snapshot of the most recently completed cycle's n_candidates
+        # reachability maps, obstacle maps (as actually fed to the model, i.e.
+        # already shifted per candidate) and region masks — consumed by
+        # ControlDebugLogger's save_reachability_maps service. None until the
+        # first cycle completes. Overwritten every cycle regardless of whether
+        # anything ever reads it, matching the existing _last_prediction_np
+        # pattern in capacitynet.py.
+        self.last_debug_dump = None
 
         self._setup_engine()
         self._setup_interfaces()
@@ -171,17 +187,25 @@ class ReachabilityPipeline(NodeComponent):
         """Cache the latest voxel grid; the timer drives the actual cycle."""
         self._latest_msg = msg
 
+    def _skip(self, reason):
+        """Report a cycle skipped before inference ran. See `on_skip`."""
+        if self.on_skip is not None:
+            self.on_skip(reason)
+
     def _on_timer(self):
         """Run one cycle on the latest cached voxel grid, every cycle_period."""
         if not self.gate():
+            self._skip('gate_closed')
             return
 
         msg = self._latest_msg
         if msg is None:
+            self._skip('no_voxel_grid')
             return
 
         centers = self.region.resolve(msg.header.frame_id)
         if centers is None:
+            self._skip('region_unresolved')
             return
 
         sx, sy, sz = msg.size_x, msg.size_y, msg.size_z
@@ -194,6 +218,7 @@ class ReachabilityPipeline(NodeComponent):
         # across the candidate grid.
         if not self.region.fits(
                 centers, vg_info, extra_margin=self.delta * (self.grid_size // 2)):
+            self._skip('region_out_of_grid')
             return
 
         t_start = time.time()
@@ -206,8 +231,22 @@ class ReachabilityPipeline(NodeComponent):
 
         reachability_maps = self.engine.predict_batch(transformed)
 
-        self.gradient_ctrl.update_workspace_region(centers)
+        self.gradient_ctrl.update_workspace_region(
+            centers, has_goal_center=self.region.region_has_goal)
         debug = self.gradient_ctrl.evaluate(reachability_maps, vg_info)
+
+        # CPU snapshot for the debug dump service — cheap relative to the ~440 ms
+        # inference cycle (a few ms to copy ~150 MB off a Jetson's shared DRAM),
+        # so it is taken unconditionally rather than only when the service is
+        # about to be called.
+        self.last_debug_dump = {
+            'reachability_maps': reachability_maps.cpu().numpy(),         # (n_candidates, D, D, D)
+            'obstacle_maps': transformed.squeeze(1).cpu().numpy(),        # (n_candidates, D, D, D), per-candidate shifted input
+            'masks': np.stack([m.to_numpy() for m in self.gradient_ctrl.last_masks]),  # (n_candidates, D, D, D) bool
+            'scores': debug['scores'],
+            'vg_info': vg_info,
+            'frame_id': msg.header.frame_id,
+        }
 
         del reachability_maps, transformed, voxel_map
 

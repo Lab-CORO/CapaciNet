@@ -29,6 +29,7 @@ from rclpy.node import Node
 from rclpy.signals import SignalHandlerOptions
 
 from capacitynet.control.components.base_commander import BaseCommander
+from capacitynet.control.components.control_debug_logger import ControlDebugLogger
 from capacitynet.control.components.reachability_pipeline import ReachabilityPipeline
 from capacitynet.control.components.workspace_region import WorkspaceRegionSource
 
@@ -52,6 +53,7 @@ class GradientBaseController(Node):
             self, self.region, callback_group=self.cuda_group)
         self.commander = BaseCommander(
             self, self.pipeline.delta, callback_group=self.control_group)
+        self.debug_logger = ControlDebugLogger(self, self.pipeline)
 
         # Wiring: the commander gates the pipeline, the pipeline feeds the
         # commander, a region that goes stale stops the base at once, and the
@@ -59,6 +61,7 @@ class GradientBaseController(Node):
         # physically reached the region.
         self.pipeline.gate = self.commander.allows_motion
         self.pipeline.on_result = self._on_result
+        self.pipeline.on_skip = self.debug_logger.log_skip
         self.region.on_lost = self.commander.stop
         self.commander.arm_inside_workspace = self.region.arm_inside_workspace
 
@@ -104,6 +107,8 @@ class GradientBaseController(Node):
         """Act on one measurement: shape it into a command, then log the cycle."""
         (vx, vy), v_cap = self.commander.submit(
             result.gradient, result.cycle_s, result.score_center)
+        self.debug_logger.log_cycle(
+            result, self.region.source, self.commander, vx, vy, v_cap)
 
         if self.pipeline.log_timing:
             gx, gy = result.gradient
@@ -117,6 +122,7 @@ class GradientBaseController(Node):
     def stop_base(self):
         """Best-effort stop, safe to call while the context is being torn down."""
         self.commander.shutdown()
+        self.debug_logger.close()
 
 
 def main(args=None):

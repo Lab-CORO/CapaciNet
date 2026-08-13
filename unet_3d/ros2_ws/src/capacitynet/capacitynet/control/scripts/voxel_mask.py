@@ -6,6 +6,54 @@ import numpy as np
 _coord_grid_cache = {}
 
 
+def translate_filled(tensor, shifts, fill_value=0):
+    """Translate `tensor` by a whole number of cells per axis, filling with `fill_value`.
+
+    Filled rather than wrapped (unlike torch.roll), so cells pushed off one face
+    do not reappear on the opposite one.
+
+    This is the package's single translation primitive, and deliberately so: a
+    candidate base position shifts *both* the obstacle map fed to the model
+    (ObstacleMapTransformer.transform) and the region mask that scores the
+    result (VoxelMask.translated). Those two must move by the same number of
+    voxels along the same axes or Q is measured somewhere the obstacles are not
+    — so they share one implementation instead of each expressing the shift in
+    its own convention. `fill_value` is per-caller: VoxelMask is boolean, so it
+    keeps the default 0/False; -1 on a boolean tensor would coerce to True and
+    mark newly-created cells as *inside* the scored region.
+
+    Args:
+        tensor: torch.Tensor of any dtype and rank. Axis k moves by shifts[k].
+        shifts: sequence of ints, one per leading axis. Axes beyond its length
+            are left unshifted.
+        fill_value: value written into cells that have no source after the
+            shift (default 0).
+
+    Returns:
+        torch.Tensor: new tensor, same shape and dtype
+    """
+    def _slices(n, d):
+        # out[i] = tensor[i - d]  ->  destination i in [d, n + d) clipped to [0, n).
+        # Both bounds are clamped into [0, n] rather than just min()'d: a shift of
+        # |d| >= n pushes everything off the grid, and an unclamped negative stop
+        # would be read as an index from the end and copy a bogus slice back in.
+        def _clamp(v):
+            return min(max(v, 0), n)
+        return (slice(_clamp(d), _clamp(n + d)),
+                slice(_clamp(-d), _clamp(n - d)))
+
+    dst, src = [], []
+    for axis, n in enumerate(tensor.shape):
+        d = int(shifts[axis]) if axis < len(shifts) else 0
+        dst_slice, src_slice = _slices(n, d)
+        dst.append(dst_slice)
+        src.append(src_slice)
+
+    result = torch.full_like(tensor, fill_value)
+    result[tuple(dst)] = tensor[tuple(src)]
+    return result
+
+
 def get_coord_grids(size_x, size_y, size_z, device):
     """Return a cached torch.meshgrid of voxel indices for a grid geometry.
 
@@ -173,8 +221,8 @@ class VoxelMask:
     def translated(self, di, dj, dk=0):
         """Translate the mask by an integer number of voxels, filling with False.
 
-        Zero-filled rather than wrapped (unlike torch.roll), so voxels pushed off
-        one face do not reappear on the opposite one.
+        Shares `translate_filled` with the obstacle map so the region and the
+        obstacles a candidate is scored against always move together.
 
         Args:
             di, dj, dk: int, shift in voxels along each axis
@@ -182,18 +230,9 @@ class VoxelMask:
         Returns:
             VoxelMask: New, translated mask (same shape)
         """
-        def _slices(n, d):
-            # out[i] = self[i - d]  ->  destination i in [max(0,d), min(n, n+d))
-            return slice(max(0, d), min(n, n + d)), slice(max(0, -d), min(n, n - d))
-
-        size_x, size_y, size_z = self.mask.shape
-        dst_i, src_i = _slices(size_x, int(di))
-        dst_j, src_j = _slices(size_y, int(dj))
-        dst_k, src_k = _slices(size_z, int(dk))
-
-        result = torch.zeros_like(self.mask)
-        result[dst_i, dst_j, dst_k] = self.mask[src_i, src_j, src_k]
-        return VoxelMask(mask_tensor=result, device=self.device)
+        return VoxelMask(
+            mask_tensor=translate_filled(self.mask, (di, dj, dk)),
+            device=self.device)
 
     # ==================== Conversions ====================
 

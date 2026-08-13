@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 
 import torch
-import torch.nn.functional as F
 import yaml
-from .voxel_mask import VoxelMask
+from .voxel_mask import VoxelMask, translate_filled
 
 
 class ObstacleMapTransformer:
@@ -95,7 +94,8 @@ class ObstacleMapTransformer:
         """
         # Ensure correct shape
         if voxel_map.dim() != 5:
-            raise ValueError(f"Expected 5D tensor (B, C, D, H, W), got shape {voxel_map.shape}")
+            raise ValueError('Expected 5D tensor (batch, channels, size_x, size_y, '
+                             f'size_z), got shape {voxel_map.shape}')
 
         batch, channels, size_x, size_y, size_z = voxel_map.shape
 
@@ -115,45 +115,23 @@ class ObstacleMapTransformer:
             voxel_map_3d = static_mask.apply_to_voxelmap(voxel_map_3d, masked_value=0.0)
             voxel_map = voxel_map_3d.unsqueeze(0).unsqueeze(0)  # Back to 5D
 
-        # Convert meters to voxel indices
-        tx_voxels = delta_x / self.resolution
-        ty_voxels = delta_y / self.resolution
+        # Obstacles move opposite to the base: stepping the base to
+        # (+delta_x, +delta_y) makes the world appear to move by
+        # (-delta_x, -delta_y) in the base frame.
+        #
+        # This must stay character-for-character the shift that
+        # GradientBasedController.compute_quality_scores applies to the region
+        # mask — the mask scores the map produced here, so if the two disagree
+        # on sign or axis, Q is read somewhere the obstacles are not. Both go
+        # through translate_filled for exactly that reason.
+        di = -int(round(delta_x / self.resolution))
+        dj = -int(round(delta_y / self.resolution))
 
-        # Obstacles move in opposite direction of base
-        tx_voxels = -tx_voxels
-        ty_voxels = -ty_voxels
-
-        # Convert to normalized coordinates [-1, 1] for affine_grid
-        # PyTorch convention: (D, H, W) = (X, Y, Z)
-        tx_norm = 2.0 * tx_voxels / size_x
-        ty_norm = 2.0 * ty_voxels / size_y
-        tz_norm = 0.0  # No translation in Z
-
-        # Create 3D affine transformation matrix (3x4)
-        # Identity rotation + translation
-        theta = torch.tensor([
-            [1, 0, 0, tx_norm],
-            [0, 1, 0, ty_norm],
-            [0, 0, 1, tz_norm]
-        ], dtype=voxel_map.dtype, device=self.device).unsqueeze(0)  # (1, 3, 4)
-
-        # Generate sampling grid
-        grid = F.affine_grid(
-            theta,
-            voxel_map.size(),
-            align_corners=False
-        )
-
-        # Sample voxel map at transformed positions
-        # mode='nearest' for binary occupancy data
-        # padding_mode='zeros' fills out-of-bounds with 0 (free space)
-        transformed = F.grid_sample(
-            voxel_map,
-            grid,
-            mode='nearest',
-            padding_mode='zeros',
-            align_corners=False
-        )
+        # voxel_map is (batch, channels, size_x, size_y, size_z): x and y are
+        # axes 2 and 3. Cells with no source after the shift are filled with -1
+        # (unknown/unobserved, distinct from 0=free and 1=occupied), and nothing
+        # wraps around from the opposite face.
+        transformed = translate_filled(voxel_map, (0, 0, di, dj), fill_value=-1)
 
         # Restore static obstacles at their original positions
         if static_mask is not None and static_voxels is not None:

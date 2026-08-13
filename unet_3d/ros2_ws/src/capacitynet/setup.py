@@ -31,7 +31,9 @@ setup(
             'grasp=capacitynet.control.nodes.grasp:main',
             'replay_maps=capacitynet.control.nodes.replay_maps:main',
             'metrics_recorder=capacitynet.rm_model.metrics_recorder:main',
-        ],
+            'mock_fiducial_marker=capacitynet.control.nodes.mock_fiducial_marker:main',
+            'mock_arm_trajectory=capacitynet.control.nodes.mock_arm_trajectory:main',
+        ]
     },
 )
 

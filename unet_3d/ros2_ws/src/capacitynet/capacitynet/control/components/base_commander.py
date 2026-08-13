@@ -152,6 +152,21 @@ class BaseCommander(NodeComponent):
         """Whether the enable topic/service currently permits commanding."""
         return self._enabled
 
+    @property
+    def converged(self):
+        """Whether the last submitted gradient was below min_speed (holding position)."""
+        return self._converged
+
+    @property
+    def grasper_state(self):
+        """Last state reported by grasp.py on grasper_state_topic, or None if never heard."""
+        return self._grasper_state
+
+    @property
+    def grasper_allows_motion(self):
+        """Whether the last known grasper state is in grasper_allowed_states."""
+        return self._grasper_allows_motion()
+
     def allows_motion(self):
         """Enabled, grasper idle, not converged, and the arm not already inside the workspace."""
         # TEMP DEBUG BYPASS: arm-in-workspace interlock disabled to check whether

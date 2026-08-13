@@ -8,6 +8,11 @@ from launch_ros.actions import Node
 # (name, default, description) — kept as a table because the node has many knobs
 # and declaring each one by hand triples the length of this file.
 ARGUMENTS = [
+    ('debug_csv_path', "/home/ros2_ws/src/control_debug.csv", 'csv for debug'),
+    ('debug_gradient_html_path', '',
+     'Interactive Plotly HTML of the explored (goal_x, goal_y, Q_center) trace, '
+     'one point per cycle. Empty disables accumulation; when set, call the '
+     '~/save_gradient_exploration service (std_srvs/Trigger) to write it'),
     ('voxel_grid_topic', '/curobo_trajectory_planner/voxel_grid_sparse',
      'curobo_msgs/SparseVoxelGrid topic driving the control loop'),
     ('cycle_period', '2.0',
@@ -27,14 +32,14 @@ ARGUMENTS = [
      'geometry_msgs/Twist topic commanding the mobile base'),
     ('target_marker_id', '-1',
      'Marker id used as workspace center; -1 = first marker in the array'),
-    ('model_config_path', '/home/ros2_ws/src/capacitynet/config/test_reach.yaml',
+    ('model_config_path', '/home/ros2_ws/src/test.yaml',
      'Path to the reachability model YAML config'),
     ('fp16', 'false',
      'Run the PyTorch fallback in half precision (ignored when a TRT engine loads)'),
 
-    ('workspace_radius', '0.30',
+    ('workspace_radius', '0.10',
      'Goal sphere radius in meters (region center 0)'),
-    ('path_radius', '0.30',
+    ('path_radius', '0.10',
      'Path-tail sphere radius in meters (region centers 1+). Defaults to the '
      'same value as workspace_radius'),
     ('ee_frame', 'dsr01/link_6',
@@ -43,7 +48,7 @@ ARGUMENTS = [
     ('arm_stop_margin', '0.05',
      'Hysteresis band in meters added to workspace_radius before the '
      'arm-in-workspace interlock releases'),
-    ('grid_spacing', '0.10',
+    ('grid_spacing', '0.1',
      'Grid spacing delta in meters; also bounds travel between gradient updates'),
     ('grid_size', '3',
      'Number of candidate base positions per grid side (must be odd, >= 3); '
@@ -54,7 +59,7 @@ ARGUMENTS = [
      'Commanded speed ceiling in m/s (hardware-validated maximum)'),
     ('step_fraction', '0.5',
      'Fraction of delta the base may travel per control cycle; sets the adaptive cap'),
-    ('min_speed', '0.002',
+    ('min_speed', '0.005',
      'Below this commanded speed the node declares convergence and publishes zero'),
     ('control_gain', '1.0',
      'Proportional gain k in v = k * grad Q'),
@@ -71,7 +76,7 @@ ARGUMENTS = [
 
     ('publish_rate', '10.0',
      'Rate in Hz at which /cmd_vel is (re)published by the watchdog'),
-    ('command_timeout', '1.0',
+    ('command_timeout', '2.10',
      'Seconds without a reachability update before the base is stopped'),
     ('marker_timeout', '2.0',
      'Seconds without a marker detection before the base is stopped'),

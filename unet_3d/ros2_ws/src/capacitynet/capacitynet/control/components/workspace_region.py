@@ -104,6 +104,10 @@ class WorkspaceRegionSource(NodeComponent):
         # switching source changes what Q measures and so rescales the gradient.
         self._source = None
         self._n_region_markers = 0
+        # Whether the last resolved region's index 0 is a true mpc_goal (gets
+        # workspace_radius) or a path-tail point standing in for it (gets
+        # path_radius like the rest) — see _mpc_region and _radii_for.
+        self._region_has_goal = True
 
         # Last resolved region, cached so arm_inside_workspace() can be polled by
         # BaseCommander's own timer (10 Hz) without waiting on the next inference
@@ -183,8 +187,22 @@ class WorkspaceRegionSource(NodeComponent):
 
     @property
     def source(self):
-        """Which input produced the last region: 'static' | 'mpc_goal+Npath' | 'marker'."""
+        """Which input produced the last region.
+
+        One of 'static' | 'mpc_goal+Npath' | 'path_only+N' | 'marker'.
+        """
         return self._source
+
+    @property
+    def region_has_goal(self):
+        """Whether the last resolved region's index 0 is a true mpc_goal center.
+
+        False when the region was built from the path tail alone (no fresh
+        mpc_goal) — callers that assign workspace_radius to index 0 (see
+        _radii_for, and GradientBasedController's own copy of that logic)
+        need this to avoid treating a path point as the goal.
+        """
+        return self._region_has_goal
 
     def resolve(self, target_frame):
         """Workspace region in `target_frame` as a list of centers, or None.
@@ -248,9 +266,13 @@ class WorkspaceRegionSource(NodeComponent):
 
     def _radii_for(self, centers):
         """Per-center sphere radii: workspace_radius for the goal (index 0),
-        path_radius for every path-tail center.
+        path_radius for every path-tail center. When the region has no true
+        goal (path-tail-only — see region_has_goal), every center gets
+        path_radius, including index 0.
         """
-        return [self.workspace_radius] + [self.path_radius] * (len(centers) - 1)
+        if self._region_has_goal:
+            return [self.workspace_radius] + [self.path_radius] * (len(centers) - 1)
+        return [self.path_radius] * len(centers)
 
     def fits(self, centers, vg_info, extra_margin=0.0):
         """Check that every region sphere stays inside the grid, with `extra_margin` in x/y.
@@ -329,19 +351,38 @@ class WorkspaceRegionSource(NodeComponent):
     # ── Resolution ───────────────────────────────────────────────────────────
 
     def _resolve_centers(self, target_frame):
+        """Priority: static > mpc_goal(+path) > marker > path tail alone.
+
+        A path-only region (no fresh mpc_goal — see _mpc_region) ranks below
+        the marker on purpose: it exists so a path-only source (e.g.
+        mock_arm_trajectory) is not starved of a region when nothing else is
+        available, not to override a real marker detection. Without this
+        marker check in between, a continuously-republished mock path would
+        permanently shadow the marker, since _mpc_region succeeds on every
+        cycle and always ran first.
+        """
         if self.static_workspace_center is not None:
+            self._region_has_goal = True
             self._note_source('static')
             return [self.static_workspace_center]
 
-        centers = self._mpc_region(target_frame)
-        if centers:
+        centers, has_goal = self._mpc_region(target_frame)
+        if centers and has_goal:
+            self._region_has_goal = True
             self._note_source(f'mpc_goal+{len(centers) - 1}path')
             return centers
 
-        centers = self._marker_region(target_frame)
-        if centers:
+        marker_centers = self._marker_region(target_frame)
+        if marker_centers:
+            self._region_has_goal = True
             self._note_source('marker')
+            return marker_centers
+
+        if centers:
+            self._region_has_goal = False
+            self._note_source(f'path_only+{len(centers)}')
             return centers
+
         return None
 
     def _note_source(self, source):
@@ -356,19 +397,38 @@ class WorkspaceRegionSource(NodeComponent):
                 self.source_pub.publish(String(data=source))
 
     def _mpc_region(self, target_frame):
-        """Goal sphere plus the path tail, in target_frame. [] when unavailable."""
-        if self._mpc_goal is None or self._age_s(self._mpc_goal_stamp) > self.mpc_timeout:
-            return []
+        """Goal sphere plus path tail, in target_frame.
 
-        centers = self._transform_positions(
-            [self._mpc_goal], self.planning_frame, target_frame)
-        if not centers:
-            return []
+        Falls back to the path tail alone (no goal sphere) when mpc_goal is
+        absent or stale but the path is fresh, so a source that only ever
+        publishes a path (e.g. a mock without a real MPC bridge) is not
+        starved of a region — see region_has_goal for how the caller must
+        adjust radii when that happens.
 
-        if self._path_tail and self._age_s(self._path_stamp) <= self.mpc_timeout:
-            centers.extend(self._transform_positions(
-                self._path_tail, self._path_frame, target_frame))
-        return centers
+        Returns:
+            (centers, has_goal): centers is [] when neither goal nor path is
+                available; has_goal is True except in the path-only case.
+        """
+        goal_fresh = (self._mpc_goal is not None
+                      and self._age_s(self._mpc_goal_stamp) <= self.mpc_timeout)
+        path_fresh = bool(self._path_tail) and self._age_s(self._path_stamp) <= self.mpc_timeout
+
+        if goal_fresh:
+            centers = self._transform_positions(
+                [self._mpc_goal], self.planning_frame, target_frame)
+            if not centers:
+                return [], True
+            if path_fresh:
+                centers.extend(self._transform_positions(
+                    self._path_tail, self._path_frame, target_frame))
+            return centers, True
+
+        if path_fresh:
+            centers = self._transform_positions(
+                self._path_tail, self._path_frame, target_frame)
+            return centers, False
+
+        return [], True
 
     def _marker_region(self, target_frame):
         """Single sphere on the fiducial marker. [] when unavailable."""
