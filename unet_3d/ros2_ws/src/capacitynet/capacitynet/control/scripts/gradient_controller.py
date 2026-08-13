@@ -342,6 +342,29 @@ class GradientBasedController:
                 for r in range(n)]
         return '\n'.join(rows)
 
+    def _per_sphere_scores(self, reachability_maps, vg_info):
+        """Mean reachability inside each region sphere individually, unlike
+        compute_quality_scores which unions them into one number.
+
+        Only computed for the untranslated (idx_center) map — the candidate
+        the base actually occupies this cycle — since it is a debug/logging
+        aid, not part of the gradient fit. One extra sphere mask per region
+        centre (region_size <= a handful), negligible next to the ~440 ms
+        inference cycle.
+
+        Returns:
+            list[float]: one mean per centre, same order as
+                workspace_centers_world (index 0 is the goal iff
+                _region_has_goal — see _radii_for)
+        """
+        rm_center = reachability_maps[self.idx_center]
+        radii = self._radii_for(self.workspace_centers_world)
+        return [
+            WorkspaceEvaluation(center, radius, self.device)
+            .compute_quality_score(rm_center, **vg_info)
+            for center, radius in zip(self.workspace_centers_world, radii)
+        ]
+
     def evaluate(self, reachability_maps, vg_info):
         """
         Score the n_candidates candidate positions and fit the gradient.
@@ -369,6 +392,7 @@ class GradientBasedController:
             'gradient': (grad_x, grad_y),
             'gradient_magnitude': float(np.hypot(grad_x, grad_y)),
             'score_center': scores[self.idx_center].item(),
+            'per_sphere_scores': self._per_sphere_scores(reachability_maps, vg_info),
             'gradient_method': self.gradient_method,
             'region_size': len(self.workspace_centers_world),
             'mask_shift_exact': self.mask_shift_exact,

@@ -104,9 +104,10 @@ class WorkspaceRegionSource(NodeComponent):
         # switching source changes what Q measures and so rescales the gradient.
         self._source = None
         self._n_region_markers = 0
-        # Whether the last resolved region's index 0 is a true mpc_goal (gets
-        # workspace_radius) or a path-tail point standing in for it (gets
-        # path_radius like the rest) — see _mpc_region and _radii_for.
+        # Whether the last resolved region's index 0 is a true anchor (mpc_goal
+        # or marker — gets workspace_radius) or a path-tail point standing in
+        # for it (gets path_radius like the rest) — see _resolve_centers and
+        # _radii_for.
         self._region_has_goal = True
 
         # Last resolved region, cached so arm_inside_workspace() can be polled by
@@ -351,37 +352,40 @@ class WorkspaceRegionSource(NodeComponent):
     # ── Resolution ───────────────────────────────────────────────────────────
 
     def _resolve_centers(self, target_frame):
-        """Priority: static > mpc_goal(+path) > marker > path tail alone.
+        """Priority: static > mpc_goal(+path) > marker(+path) > path alone.
 
-        A path-only region (no fresh mpc_goal — see _mpc_region) ranks below
-        the marker on purpose: it exists so a path-only source (e.g.
-        mock_arm_trajectory) is not starved of a region when nothing else is
-        available, not to override a real marker detection. Without this
-        marker check in between, a continuously-republished mock path would
-        permanently shadow the marker, since _mpc_region succeeds on every
-        cycle and always ran first.
+        The path tail joins whichever anchor is actually available (goal or
+        marker) rather than being tied to the goal specifically — this lets
+        a path-only publisher (e.g. mock_arm_trajectory, which never
+        publishes mpc_goal) still combine with a live marker detection
+        instead of being shadowed by it. Path-only (no anchor at all) stays
+        the last resort, below the marker, so a continuously-republished
+        mock path can never starve a real marker detection on its own.
         """
         if self.static_workspace_center is not None:
             self._region_has_goal = True
             self._note_source('static')
             return [self.static_workspace_center]
 
-        centers, has_goal = self._mpc_region(target_frame)
-        if centers and has_goal:
+        path_centers = self._path_tail_centers(target_frame)
+
+        goal_centers = self._goal_center(target_frame)
+        if goal_centers:
             self._region_has_goal = True
-            self._note_source(f'mpc_goal+{len(centers) - 1}path')
-            return centers
+            self._note_source(f'mpc_goal+{len(path_centers)}path')
+            return goal_centers + path_centers
 
         marker_centers = self._marker_region(target_frame)
         if marker_centers:
             self._region_has_goal = True
-            self._note_source('marker')
-            return marker_centers
+            self._note_source(
+                f'marker+{len(path_centers)}path' if path_centers else 'marker')
+            return marker_centers + path_centers
 
-        if centers:
+        if path_centers:
             self._region_has_goal = False
-            self._note_source(f'path_only+{len(centers)}')
-            return centers
+            self._note_source(f'path_only+{len(path_centers)}')
+            return path_centers
 
         return None
 
@@ -396,39 +400,27 @@ class WorkspaceRegionSource(NodeComponent):
             if self.source_pub is not None:
                 self.source_pub.publish(String(data=source))
 
-    def _mpc_region(self, target_frame):
-        """Goal sphere plus path tail, in target_frame.
-
-        Falls back to the path tail alone (no goal sphere) when mpc_goal is
-        absent or stale but the path is fresh, so a source that only ever
-        publishes a path (e.g. a mock without a real MPC bridge) is not
-        starved of a region — see region_has_goal for how the caller must
-        adjust radii when that happens.
-
-        Returns:
-            (centers, has_goal): centers is [] when neither goal nor path is
-                available; has_goal is True except in the path-only case.
-        """
+    def _goal_center(self, target_frame):
+        """Single mpc_goal sphere, in target_frame. [] when absent/stale."""
         goal_fresh = (self._mpc_goal is not None
                       and self._age_s(self._mpc_goal_stamp) <= self.mpc_timeout)
+        if not goal_fresh:
+            return []
+        return self._transform_positions(
+            [self._mpc_goal], self.planning_frame, target_frame)
+
+    def _path_tail_centers(self, target_frame):
+        """Path-tail spheres, in target_frame. [] when absent/stale.
+
+        Independent of mpc_goal freshness: this is a standalone anchor check
+        so the path can join whichever anchor (goal or marker) is actually
+        available — see _resolve_centers.
+        """
         path_fresh = bool(self._path_tail) and self._age_s(self._path_stamp) <= self.mpc_timeout
-
-        if goal_fresh:
-            centers = self._transform_positions(
-                [self._mpc_goal], self.planning_frame, target_frame)
-            if not centers:
-                return [], True
-            if path_fresh:
-                centers.extend(self._transform_positions(
-                    self._path_tail, self._path_frame, target_frame))
-            return centers, True
-
-        if path_fresh:
-            centers = self._transform_positions(
-                self._path_tail, self._path_frame, target_frame)
-            return centers, False
-
-        return [], True
+        if not path_fresh:
+            return []
+        return self._transform_positions(
+            self._path_tail, self._path_frame, target_frame)
 
     def _marker_region(self, target_frame):
         """Single sphere on the fiducial marker. [] when unavailable."""

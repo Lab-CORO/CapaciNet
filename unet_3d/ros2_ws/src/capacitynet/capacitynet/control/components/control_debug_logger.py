@@ -11,6 +11,15 @@ Timing is limited to `cycle_s` (the pipeline's own total) and the wall-clock
 interval between calls to `log_cycle`: no per-stage breakdown (preprocess vs.
 predict vs. gradient) is available past ReachabilityPipeline's own boundary.
 
+`q_center` is the mean reachability over the *union* of every region sphere.
+The `ws_mean_0`..`ws_mean_{N-1}` columns (N = 1 + path_tail_samples, fixed at
+construction so the CSV schema does not depend on which region source is
+active this cycle) break that union back down into one mean per sphere,
+computed independently — so an approach where the goal is reachable but the
+path corridor is not (or vice versa) is visible even though it would average
+out in q_center alone. Same order as GradientResult.centers; a cycle with
+fewer spheres than N leaves the trailing columns blank, not zero.
+
 `log_skip` writes a row for a cycle the pipeline never ran inference for at
 all (gate closed, no voxel grid yet, region unresolved, or the region doesn't
 fit the grid — see ReachabilityPipeline.on_skip) — only `timestamp` and
@@ -99,11 +108,19 @@ class ControlDebugLogger(NodeComponent):
         self._last_result = None
         self._last_region_source = None
 
+        # Upper bound on how many region spheres a cycle can ever report: the
+        # goal (if any) plus the full path tail. Fixed at construction time
+        # from the same param WorkspaceRegionSource uses, so the CSV schema
+        # is stable even though a given cycle's actual region_size varies
+        # (marker/static/path_only = 1, mpc_goal+path = up to this).
+        self._max_region_size = 1 + self.pipeline.region.path_tail_samples
+        self._fields = _FIELDS + [f'ws_mean_{i}' for i in range(self._max_region_size)]
+
         if self.csv_path:
             path = os.path.expanduser(self.csv_path)
             os.makedirs(os.path.dirname(os.path.abspath(path)) or '.', exist_ok=True)
             self._file = open(path, 'w', newline='')
-            self._writer = csv.DictWriter(self._file, fieldnames=_FIELDS)
+            self._writer = csv.DictWriter(self._file, fieldnames=self._fields)
             self._writer.writeheader()
             self._file.flush()
             self.log.info(f'ControlDebugLogger: writing to {path}')
@@ -168,7 +185,7 @@ class ControlDebugLogger(NodeComponent):
         self._last_stamp = now
 
         gx, gy = result.gradient
-        self._writer.writerow({
+        row = {
             'timestamp': now.nanoseconds * 1e-9,
             'cycle_s': round(result.cycle_s, 4),
             'dt_since_last_s': round(dt, 4) if dt is not None else '',
@@ -188,7 +205,15 @@ class ControlDebugLogger(NodeComponent):
             'grasper_allows_motion': commander.grasper_allows_motion,
             'arm_inside_workspace': commander.arm_inside_workspace(),
             'allows_motion': commander.allows_motion(),
-        })
+        }
+        # One column per region sphere, in the same order as result.centers
+        # (index 0 is the goal iff region_has_goal — see WorkspaceRegionSource).
+        # Cycles with fewer spheres than _max_region_size leave the trailing
+        # columns blank (DictWriter's restval), not zero, so an unused sphere
+        # is distinguishable from one that genuinely scored 0.0.
+        for i, q in enumerate(result.per_sphere_scores):
+            row[f'ws_mean_{i}'] = round(q, 5)
+        self._writer.writerow(row)
         self._file.flush()
 
     def log_skip(self, reason):

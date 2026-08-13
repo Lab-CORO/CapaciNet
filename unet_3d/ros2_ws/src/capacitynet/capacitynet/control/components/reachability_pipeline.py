@@ -39,6 +39,7 @@ class GradientResult:
     gradient_magnitude: float
     scores: object             # numpy array of the grid_size**2 quality scores
     score_center: float        # Q at the untranslated (center) position
+    per_sphere_scores: list    # Q of each region sphere individually (center position only)
     centers: list              # region sphere centers, in `frame_id`
     region_size: int           # how many spheres the union covers
     mask_shift_exact: bool     # False when each region mask had to be rebuilt
@@ -255,6 +256,7 @@ class ReachabilityPipeline(NodeComponent):
             gradient_magnitude=debug['gradient_magnitude'],
             scores=debug['scores'],
             score_center=debug['score_center'],
+            per_sphere_scores=debug['per_sphere_scores'],
             centers=centers,
             region_size=debug['region_size'],
             mask_shift_exact=debug['mask_shift_exact'],

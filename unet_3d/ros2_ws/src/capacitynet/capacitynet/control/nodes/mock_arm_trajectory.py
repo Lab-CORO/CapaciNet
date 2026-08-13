@@ -6,10 +6,11 @@ tick it looks up two TF frames (the arm TCP and the object/target) in
 `planning_frame`, takes the midpoint of the segment between them, and
 publishes that single point as a one-pose `nav_msgs/Path` on `path_topic`.
 
-No `mpc_goal` is published: WorkspaceRegionSource._mpc_region() falls back to
-the path tail alone when no fresh mpc_goal exists (region_has_goal=False —
-see workspace_region.py), which is exactly this mock's case. Publishing the
-same point on both topics would make the goal sphere and the path sphere
+No `mpc_goal` is published: WorkspaceRegionSource._resolve_centers() joins
+the path tail to whichever anchor is available — a fresh marker if one is
+visible, otherwise a path-only region (region_has_goal=False) as a last
+resort — see workspace_region.py. Publishing the same point on both
+mpc_goal and path would instead make the goal sphere and the path sphere
 concentric — the union collapses to whichever radius is larger, so the path
 sphere is visually indistinguishable from the goal sphere in any debug dump.
 Publishing only the path avoids that entirely.
