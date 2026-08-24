@@ -37,7 +37,7 @@ from tf2_geometry_msgs import do_transform_pose_stamped
 from geometry_msgs.msg import PoseStamped, Pose, TransformStamped, Vector3
 from std_msgs.msg import Bool, String
 from std_srvs.srv import SetBool
-from control_msgs.action import ParallelGripperCommand
+from control_msgs.action import GripperCommand
 from curobo_msgs.action import SendTrajectory
 from curobo_msgs.srv import SetMask
 from ros2_markertracker_interfaces.msg import FiducialMarkerArray
@@ -167,6 +167,19 @@ class ObjectGrasper(Node):
         # forwards it into planner.set_live_goal(...)).
         self.declare_parameter('mpc_goal_topic', '/curobo_trajectory_planner/mpc_goal')
         self.declare_parameter('mpc_goal_rate', 10.0)
+        # Fallback arrival check for planners whose on_target never fires
+        # (e.g. hold_count/orientation gating never converges): if the
+        # solver's own controller_position_error agrees with the FK-measured
+        # position_error within this threshold AND position_error itself is
+        # below it, treat the arm as on target. controller_position_error is
+        # -1.0 when the active planner doesn't expose it (only LBFGS does) —
+        # that sentinel is excluded from the comparison.
+        self.declare_parameter('controller_error_match_threshold', 0.05)  # m
+        # controller_position_error must itself be below this (very tight)
+        # threshold to bypass on_target — a loose match against position_error
+        # alone isn't enough, since two errors that are merely similar but
+        # both still large don't mean the arm has actually arrived.
+        self.declare_parameter('controller_error_bypass_threshold', 1e-5)  # m
         # Current state-machine state (e.g. "idle", "act_move_grasp"), as
         # std_msgs/String. Transient-local + published on every transition, so
         # a subscriber started mid-sequence still gets the current value
@@ -249,7 +262,7 @@ class ObjectGrasper(Node):
         self.declare_parameter('lift_move_vel', [50.0, 30.0])  # [mm/s, deg/s]
         self.declare_parameter('lift_move_acc', [80.0, 50.0])  # [mm/s^2, deg/s^2]
 
-        # Gripper (real controller serves control_msgs/action/ParallelGripperCommand,
+        # Gripper (real controller serves control_msgs/action/GripperCommand,
         # a sensor_msgs/JointState-based goal — NOT the older GripperCommand type).
         self.declare_parameter('gripper_action', '/robotiq_gripper_controller/gripper_cmd')
         self.declare_parameter('gripper_joint_name', 'robotiq_85_left_knuckle_joint')
@@ -295,6 +308,8 @@ class ObjectGrasper(Node):
         self.mpc_goal_topic = self.get_parameter('mpc_goal_topic').value
         self.state_topic = self.get_parameter('state_topic').value
         self.mpc_goal_rate = self.get_parameter('mpc_goal_rate').value
+        self.controller_error_match_threshold = self.get_parameter('controller_error_match_threshold').value
+        self.controller_error_bypass_threshold = self.get_parameter('controller_error_bypass_threshold').value
         self.move_line_service = self.get_parameter('move_line_service').value
         self.task_compliance_ctrl_service = self.get_parameter('task_compliance_ctrl_service').value
         self.release_compliance_ctrl_service = self.get_parameter('release_compliance_ctrl_service').value
@@ -338,7 +353,7 @@ class ObjectGrasper(Node):
         )
 
         self.execute_client = ActionClient(self, SendTrajectory, self.execute_action)
-        self.gripper_client = ActionClient(self, ParallelGripperCommand, self.gripper_action)
+        self.gripper_client = ActionClient(self, GripperCommand, self.gripper_action)
         self.mask_client = self.create_client(SetMask, self.mask_service_name)
 
         # Own ReentrantCallbackGroup for every Doosan native service client
@@ -966,10 +981,33 @@ class ObjectGrasper(Node):
         fb = feedback_msg.feedback
         self.get_logger().info(
             f"  [{fb.state}] progress={fb.step_progression:.2f} "
-            f"err={fb.position_error:.4f}m on_target={fb.on_target}",
+            f"err={fb.position_error:.4f}m on_target={fb.on_target} "
+            f"controller_err={fb.controller_position_error:.4f}m",
             throttle_duration_sec=1.0,
         )
-        if fb.on_target and not self._on_target_reached and self._trajectory_goal_handle is not None:
+        self.get_logger().info(f"is on Target from curobo: {fb.on_target}")
+
+        # Fallback: if the solver's own error estimate agrees with the
+        # FK-measured error within threshold, AND is itself extremely low,
+        # consider the arm arrived even if on_target never latches (e.g. a
+        # planner whose hold_count/orientation gating never converges). The
+        # tight bypass threshold on controller_position_error alone guards
+        # against two errors that are merely similar but both still large.
+        # controller_position_error == -1.0 means the active planner doesn't
+        # expose it (only LBFGS does) — skip the check in that case.
+        controller_error_converged = (
+            fb.controller_position_error != -1.0
+            and fb.controller_position_error < self.controller_error_bypass_threshold
+            and abs(fb.controller_position_error - fb.position_error) < self.controller_error_match_threshold
+        )
+        if controller_error_converged and not fb.on_target:
+            self.get_logger().info(
+                f"controller_position_error below {self.controller_error_bypass_threshold}m "
+                "and matches position_error: treating as on target"
+            )
+
+        on_target = fb.on_target or controller_error_converged
+        if on_target and not self._on_target_reached and self._trajectory_goal_handle is not None:
             self._on_target_reached = True
             self.get_logger().info("on_target=True, cancelling trajectory goal")
             self._trajectory_goal_handle.cancel_goal_async()
@@ -991,9 +1029,9 @@ class ObjectGrasper(Node):
             self.get_logger().error("Gripper action server not available")
             return False
 
-        goal_msg = ParallelGripperCommand.Goal()
-        goal_msg.command.name = [self.gripper_joint_name]
-        goal_msg.command.position = [position]
+        goal_msg = GripperCommand.Goal()
+        # goal_msg.command.name = [self.gripper_joint_name]
+        goal_msg.command.position = float(position)
         self.get_logger().info(f"Gripper command: position={position:.3f}")
         goal_handle = await self.gripper_client.send_goal_async(goal_msg)
         if goal_handle is None or not goal_handle.accepted:
