@@ -44,6 +44,8 @@ from ros2_markertracker_interfaces.msg import FiducialMarkerArray
 from heron_interface.action import TriggerGrasp
 from dsr_msgs2.srv import MoveLine, TaskComplianceCtrl, ReleaseComplianceCtrl, CheckMotion
 
+from ..scripts.execution_divergence_watchdog import ExecutionDivergenceWatchdog
+
 from rclpy.action import ActionServer, CancelResponse
 
 # Doosan dsr_msgs2 enums (see motion_services.html#moveline and
@@ -115,6 +117,11 @@ class ObjectGrasper(Node):
         self.get_logger().info(f"  - Execute action: {self.execute_action}")
         self.get_logger().info(
             f"  - MPC live-goal topic: {self.mpc_goal_topic} (rate={self.mpc_goal_rate:.1f}Hz)")
+        self.get_logger().info(
+            f"  - Divergence watchdog: {'enabled' if self.divergence_watchdog_enabled else 'disabled'} "
+            f"(threshold={self.divergence_threshold:.3f}m, debounce={self.divergence_debounce_count}, "
+            f"grace={self.divergence_grace_period:.1f}s, max_resyncs={self.divergence_max_resyncs}, "
+            f"min_interval={self.divergence_min_resync_interval:.1f}s)")
         self.get_logger().info(f"  - State topic: {self.state_topic} (std_msgs/String, latched)")
         self.get_logger().info(
             f"  - Compliant grasp approach: task_compliance={self.task_compliance_ctrl_service}, "
@@ -179,7 +186,23 @@ class ObjectGrasper(Node):
         # threshold to bypass on_target — a loose match against position_error
         # alone isn't enough, since two errors that are merely similar but
         # both still large don't mean the arm has actually arrived.
-        self.declare_parameter('controller_error_bypass_threshold', 1e-5)  # m
+        self.declare_parameter('controller_error_bypass_threshold', 1e-3)  # m
+
+        # Watchdog for a curobo execution that has internally "solved" (its
+        # own controller_position_error keeps shrinking) while the real arm
+        # has stalled (position_error plateaus) — observed after a rejected
+        # SpeedJ command (acceleration limit / missed control deadline),
+        # often triggered by simultaneous base motion. See
+        # execution_divergence_watchdog.py for the mechanism. Cancelling and
+        # resending the goal re-seeds the solver from the real robot state
+        # and reliably recovers it; retargeting via mpc_goal alone does not.
+        self.declare_parameter('divergence_watchdog_enabled', True)
+        self.declare_parameter('divergence_threshold', 0.02)      # m
+        self.declare_parameter('divergence_debounce_count', 3)    # feedback samples
+        self.declare_parameter('divergence_grace_period', 3.0)    # s after a resync
+        self.declare_parameter('divergence_max_resyncs', 3)       # per attempt
+        self.declare_parameter('divergence_min_resync_interval', 5.0)  # s
+
         # Current state-machine state (e.g. "idle", "act_move_grasp"), as
         # std_msgs/String. Transient-local + published on every transition, so
         # a subscriber started mid-sequence still gets the current value
@@ -310,6 +333,12 @@ class ObjectGrasper(Node):
         self.mpc_goal_rate = self.get_parameter('mpc_goal_rate').value
         self.controller_error_match_threshold = self.get_parameter('controller_error_match_threshold').value
         self.controller_error_bypass_threshold = self.get_parameter('controller_error_bypass_threshold').value
+        self.divergence_watchdog_enabled = self.get_parameter('divergence_watchdog_enabled').value
+        self.divergence_threshold = self.get_parameter('divergence_threshold').value
+        self.divergence_debounce_count = self.get_parameter('divergence_debounce_count').value
+        self.divergence_grace_period = self.get_parameter('divergence_grace_period').value
+        self.divergence_max_resyncs = self.get_parameter('divergence_max_resyncs').value
+        self.divergence_min_resync_interval = self.get_parameter('divergence_min_resync_interval').value
         self.move_line_service = self.get_parameter('move_line_service').value
         self.task_compliance_ctrl_service = self.get_parameter('task_compliance_ctrl_service').value
         self.release_compliance_ctrl_service = self.get_parameter('release_compliance_ctrl_service').value
@@ -407,6 +436,17 @@ class ObjectGrasper(Node):
         # Set by _on_execute_feedback once on_target=True is seen, so
         # execute_trajectory knows a cancel-on-success is in flight.
         self._on_target_reached = False
+        # Set by _on_execute_feedback when the divergence watchdog decides a
+        # resync is warranted, so execute_trajectory knows a cancel-and-resend
+        # (as opposed to a real failure) is in flight.
+        self._resync_requested = False
+        self._divergence_watchdog = ExecutionDivergenceWatchdog(
+            divergence_threshold=self.divergence_threshold,
+            debounce_count=self.divergence_debounce_count,
+            grace_period_s=self.divergence_grace_period,
+            max_resyncs=self.divergence_max_resyncs,
+            min_resync_interval_s=self.divergence_min_resync_interval,
+        )
 
         # Broadcast the computed target poses as TF (approach/grasp/lift_target) so
         # the planned goal can be checked in RViz before triggering.
@@ -923,6 +963,36 @@ class ObjectGrasper(Node):
         this lets the in-flight reactive controller keep following a marker
         that moves after the goal was sent, instead of only ever chasing the
         pose captured at trigger time.
+
+        The divergence watchdog (see ExecutionDivergenceWatchdog) covers the
+        whole attempt, including any resyncs within it: if it fires mid-goal,
+        the goal is cancelled and resent — from the live pose if
+        `live_pose_fn` is given, since the stale target_pose is exactly what
+        the resync is meant to correct for — instead of failing outright, up
+        to `divergence_max_resyncs` times.
+        """
+        self._divergence_watchdog.reset()
+        current_target = target_pose
+        while True:
+            outcome = await self._send_and_await_goal(current_target, live_pose_fn)
+            if outcome is not None:
+                return outcome
+            # outcome is None: the watchdog requested a resync. Recompute the
+            # target from the live pose if we have one, else resend as-is.
+            if live_pose_fn is not None:
+                fresh = live_pose_fn()
+                if fresh is not None:
+                    current_target = fresh
+            self.get_logger().warn(
+                f"Divergence watchdog: resending goal "
+                f"(resync {self._divergence_watchdog.resync_count}/{self.divergence_max_resyncs})")
+
+    async def _send_and_await_goal(self, target_pose: Pose, live_pose_fn) -> bool:
+        """One send-goal/await-result cycle.
+
+        Returns True/False for a final outcome, or None if execute_trajectory
+        should resend the goal (the divergence watchdog fired and the attempt
+        wasn't otherwise externally cancelled).
         """
         if not self.execute_client.server_is_ready():
             self.get_logger().error("Execute trajectory action not available")
@@ -935,6 +1005,7 @@ class ObjectGrasper(Node):
             f"Executing trajectory: target=({target_pose}"
         )
         self._on_target_reached = False
+        self._resync_requested = False
         goal_handle = await self.execute_client.send_goal_async(
             goal, feedback_callback=self._on_execute_feedback
         )
@@ -943,7 +1014,7 @@ class ObjectGrasper(Node):
             return False
 
         # Store goal_handle so grasp_trigger_cb (and the feedback callback,
-        # once on_target=True) can cancel it.
+        # once on_target=True or a resync is warranted) can cancel it.
         self._trajectory_goal_handle = goal_handle
         live_goal_timer = None
         if live_pose_fn is not None:
@@ -957,6 +1028,11 @@ class ObjectGrasper(Node):
                 # feedback reports on_target, and treat that as success.
                 self.get_logger().info("On target: trajectory cancelled as success")
                 return True
+            if self._resync_requested and not self._cancel_requested:
+                # A real external cancel (grasp_trigger_cb) takes priority
+                # over a watchdog-driven resync: fall through to the normal
+                # result handling below instead of looping again.
+                return None
             result = result_response.result
             if result.success:
                 self.get_logger().info(f"Trajectory succeeded: {result.message}")
@@ -1011,6 +1087,29 @@ class ObjectGrasper(Node):
             self._on_target_reached = True
             self.get_logger().info("on_target=True, cancelling trajectory goal")
             self._trajectory_goal_handle.cancel_goal_async()
+            return
+
+        if (self.divergence_watchdog_enabled and not self._resync_requested
+                and not self._on_target_reached and self._trajectory_goal_handle is not None):
+            now_s = self.get_clock().now().nanoseconds * 1e-9
+            outcome = self._divergence_watchdog.on_feedback(
+                fb.position_error, fb.controller_position_error, now_s)
+            if outcome == ExecutionDivergenceWatchdog.RESYNC:
+                self.get_logger().warn(
+                    f"Divergence watchdog: position_error={fb.position_error:.4f}m vs "
+                    f"controller_position_error={fb.controller_position_error:.4f}m "
+                    "— cancelling and resending goal")
+                self._resync_requested = True
+                self._trajectory_goal_handle.cancel_goal_async()
+            elif outcome == ExecutionDivergenceWatchdog.BUDGET_EXHAUSTED:
+                self.get_logger().error(
+                    f"Divergence watchdog: still diverging after "
+                    f"{self.divergence_max_resyncs} resyncs — failing this attempt")
+                # _resync_requested stays False: _send_and_await_goal falls
+                # through to the normal (cancelled -> not success) result
+                # handling below, so this is reported as a genuine failure
+                # rather than mistaken for a user-requested cancel or a resync.
+                self._trajectory_goal_handle.cancel_goal_async()
 
     async def call_gripper_action(self, position: float, grasp_object = False) -> bool:
         """Send a ParallelGripperCommand goal for gripper_joint_name to position.
