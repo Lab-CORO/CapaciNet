@@ -15,7 +15,7 @@ ARGUMENTS = [
      '~/save_gradient_exploration service (std_srvs/Trigger) to write it'),
     ('voxel_grid_topic', '/curobo_trajectory_planner/voxel_grid_sparse',
      'curobo_msgs/SparseVoxelGrid topic driving the control loop'),
-    ('cycle_period', '2.0',
+    ('cycle_period', '1.0',
      'Seconds between inference cycles; the voxel grid subscription only caches '
      'the latest message, a timer runs the cycle on it at this fixed cadence'),
     ('marker_topic', '/fiducial_markers',
@@ -23,9 +23,9 @@ ARGUMENTS = [
     ('goal_topic', '/curobo_trajectory_planner/mpc_goal',
      'geometry_msgs/Pose grasp target published by grasp.py; primary region center'),
     ('path_topic', '/mpc_predicted_path',
-     'nav_msgs/Path whose tail is unioned with the goal sphere'),
-    ('path_tail_samples', '4',
-     'Number of path poses (from the end) added to the scored region; 0 = goal only'),
+     'nav_msgs/Path whose horizon point is unioned with the goal sphere'),
+    ('path_horizon_s', '4.0',
+     'Seconds from now to look up in the path (nearest header.stamp); negative = goal only'),
     ('planning_frame', 'dsr01/base_link',
      'Frame assumed for goal_topic, which carries no header'),
     ('cmd_vel_topic', '/cmd_vel',
@@ -42,12 +42,6 @@ ARGUMENTS = [
     ('path_radius', '0.10',
      'Path-tail sphere radius in meters (region centers 1+). Defaults to the '
      'same value as workspace_radius'),
-    ('ee_frame', 'dsr01/link_6',
-     'TF frame rigidly attached to the arm TCP/end-effector; base stops once it '
-     'enters the workspace region. Empty string disables the interlock'),
-    ('arm_stop_margin', '0.05',
-     'Hysteresis band in meters added to workspace_radius before the '
-     'arm-in-workspace interlock releases'),
     ('grid_spacing', '0.1',
      'Grid spacing delta in meters; also bounds travel between gradient updates'),
     ('grid_size', '3',
@@ -87,7 +81,7 @@ ARGUMENTS = [
      'Start commanding immediately instead of waiting for ~/enable'),
     ('grasper_state_topic', '/object_grasper/state',
      'Grasp state topic; any non-idle state blocks motion. Empty string disables the interlock'),
-    ('grasper_allowed_states', 'idle,act_move_pregrasp',
+    ('grasper_allowed_states', 'act_move_pregrasp',
      'Comma-separated grasper states that permit base motion. Stops at '
      'act_move_pregrasp because grasp.py only actively corrects for a moving '
      'target up to that state; from act_open_gripper onward the arm holds its '
@@ -105,12 +99,22 @@ ARGUMENTS = [
      'Publish the grid_size**2 candidate scores and the gradient arrow as RViz markers'),
 ]
 
+# grasp.py's own params, passed through to the grasp node started alongside
+# the controller so it actually drives mpc_goal/mpc_predicted_path and
+# grasper_state_topic (both consumed above).
+GRASP_ARGUMENTS = [
+    ('grasp_distance', '-0.15',
+     'grasp.py: distance (m) along the marker Z at the final grasp pose'),
+    ('approach_distance', '-0.23',
+     'grasp.py: distance (m) along the marker Z at the pregrasp pose'),
+]
+
 # Topic remappings, not node parameters: WorkspaceRegionSource's TransformListener
-# subscribes to the plain 'tf'/'tf_static' topics, which some robots publish under
-# a namespace (e.g. /leeloo/tf) instead of the default /tf, /tf_static.
+# subscribes to the plain 'tf'/'tf_static' topics. This robot (leeloo) publishes
+# its TF tree under the /leeloo namespace rather than the default /tf, /tf_static.
 TF_REMAP_ARGUMENTS = [
-    ('tf_topic', '/tf', 'Topic carrying tf2_msgs/TFMessage for dynamic transforms'),
-    ('tf_static_topic', '/tf_static', 'Topic carrying tf2_msgs/TFMessage for static transforms'),
+    ('tf_topic', '/leeloo/tf', 'Topic carrying tf2_msgs/TFMessage for dynamic transforms'),
+    ('tf_static_topic', '/leeloo/tf_static', 'Topic carrying tf2_msgs/TFMessage for static transforms'),
 ]
 
 
@@ -119,10 +123,16 @@ def generate_launch_description():
 
     declared = [
         DeclareLaunchArgument(name, default_value=default, description=description)
-        for name, default, description in ARGUMENTS + TF_REMAP_ARGUMENTS
+        for name, default, description in ARGUMENTS + GRASP_ARGUMENTS + TF_REMAP_ARGUMENTS
     ]
 
     parameters = {name: LaunchConfiguration(name) for name, _, _ in ARGUMENTS}
+    grasp_parameters = {name: LaunchConfiguration(name) for name, _, _ in GRASP_ARGUMENTS}
+
+    tf_remappings = [
+        ('tf', LaunchConfiguration('tf_topic')),
+        ('tf_static', LaunchConfiguration('tf_static_topic')),
+    ]
 
     gradient_base_controller_node = Node(
         package='capacitynet',
@@ -130,10 +140,18 @@ def generate_launch_description():
         name='gradient_base_controller',
         output='screen',
         parameters=[parameters],
-        remappings=[
-            ('tf', LaunchConfiguration('tf_topic')),
-            ('tf_static', LaunchConfiguration('tf_static_topic')),
-        ],
+        remappings=tf_remappings,
     )
 
-    return LaunchDescription(declared + [gradient_base_controller_node])
+    # Drives mpc_goal/mpc_predicted_path/grasper_state_topic, which the
+    # controller above consumes (region anchor + grasper-state interlock).
+    grasp_node = Node(
+        package='capacitynet',
+        executable='grasp',
+        name='object_grasper',
+        output='screen',
+        parameters=[grasp_parameters],
+        remappings=tf_remappings,
+    )
+
+    return LaunchDescription(declared + [gradient_base_controller_node, grasp_node])

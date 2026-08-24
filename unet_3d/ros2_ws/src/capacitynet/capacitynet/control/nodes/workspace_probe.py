@@ -47,7 +47,7 @@ class WorkspaceProbe(Node):
             f'(cycle every {self.pipeline.cycle_period}s)')
         log.info(
             f'  - Region: goal={self.region.goal_topic} path={self.region.path_topic} '
-            f'(tail={self.region.path_tail_samples}), fallback=marker')
+            f'(horizon={self.region.path_horizon_s}s), fallback=marker')
         log.info(
             f'  - Radius: goal={self.region.radius}m path={self.region.path_radius}m, '
             f'delta: {self.pipeline.delta} m, grid_size: {self.pipeline.grid_size} '

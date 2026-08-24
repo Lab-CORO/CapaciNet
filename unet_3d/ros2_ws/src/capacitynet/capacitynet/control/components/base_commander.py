@@ -92,14 +92,14 @@ class BaseCommander(NodeComponent):
         # docstring for why the default stops at act_move_pregrasp.
         self.grasper_allowed_states = frozenset(
             s.strip() for s in
-            str(self._declare('grasper_allowed_states', 'idle,act_move_pregrasp')).split(',')
+            str(self._declare('grasper_allowed_states', 'act_move_pregrasp')).split(',')
             if s.strip())
-        # Whether the arm has physically reached the scored workspace. A
-        # controlling node wires this to WorkspaceRegionSource.arm_inside_workspace;
-        # left alone, the interlock never engages (region.ee_frame is empty by
-        # default anyway, so this is belt-and-suspenders for a probe/mock node
+        # Whether the MPC plan is about to finish: the goal sphere and the
+        # path-horizon sphere touching. A controlling node wires this to
+        # WorkspaceRegionSource.region_spheres_touching; left alone, the
+        # interlock never engages (belt-and-suspenders for a probe/mock node
         # that never wires it at all).
-        self.arm_inside_workspace = lambda: False
+        self.region_converged = lambda: False
 
         self._enabled = self.start_enabled
         self._converged = False
@@ -112,6 +112,10 @@ class BaseCommander(NodeComponent):
         # Last computed command, republished by the watchdog until it goes stale.
         self._last_twist = Twist()
         self._last_cmd_time = None
+
+        # Last value returned by allows_motion(), so a change logs once instead
+        # of on every publish_command() tick (10 Hz).
+        self._last_allows_motion = None
 
         self._setup_interfaces()
 
@@ -168,13 +172,20 @@ class BaseCommander(NodeComponent):
         return self._grasper_allows_motion()
 
     def allows_motion(self):
-        """Enabled, grasper idle, not converged, and the arm not already inside the workspace."""
-        # TEMP DEBUG BYPASS: arm-in-workspace interlock disabled to check whether
-        # /cmd_vel gets published at all. Remove this override before real use —
-        # it lets the base keep driving after the TCP has already reached the
-        # scored region, which is exactly what this interlock exists to prevent.
-        return (self._enabled and not self._converged and self._grasper_allows_motion())
-                # and not self.arm_inside_workspace())
+        """Enabled, grasper idle, not converged, and the region not yet converged."""
+        enabled = self._enabled
+        not_converged = not self._converged
+        grasper_ok = self._grasper_allows_motion()
+        spheres_separated = not self.region_converged()
+        result = enabled and not_converged and grasper_ok and spheres_separated
+
+        if result != self._last_allows_motion:
+            self.log.info(
+                f'allows_motion: {self._last_allows_motion} -> {result} '
+                f'(enabled={enabled}, not_converged={not_converged}, '
+                f'grasper_ok={grasper_ok}, spheres_separated={spheres_separated})')
+            self._last_allows_motion = result
+        return result
 
     def submit(self, gradient, cycle_s, score_center=None):
         """Shape a gradient into the commanded velocity and cache it.

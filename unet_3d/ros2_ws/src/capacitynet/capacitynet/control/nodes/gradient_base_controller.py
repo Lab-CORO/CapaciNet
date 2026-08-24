@@ -57,13 +57,13 @@ class GradientBaseController(Node):
 
         # Wiring: the commander gates the pipeline, the pipeline feeds the
         # commander, a region that goes stale stops the base at once, and the
-        # commander stops (independent of the gradient) once the arm has
-        # physically reached the region.
+        # commander stops (independent of the gradient) once the MPC plan's
+        # goal sphere and path-horizon sphere touch — read as "about to arrive".
         self.pipeline.gate = self.commander.allows_motion
         self.pipeline.on_result = self._on_result
         self.pipeline.on_skip = self.debug_logger.log_skip
         self.region.on_lost = self.commander.stop
-        self.commander.arm_inside_workspace = self.region.arm_inside_workspace
+        self.commander.region_converged = self.region.region_spheres_touching
 
         self._log_configuration()
 
@@ -76,7 +76,7 @@ class GradientBaseController(Node):
         log.info(f'  - Marker topic: {self.region.marker_topic}')
         log.info(
             f'  - Region: goal={self.region.goal_topic} path={self.region.path_topic} '
-            f'(tail={self.region.path_tail_samples}), fallback=marker')
+            f'(horizon={self.region.path_horizon_s}s), fallback=marker')
         log.info(
             f'  - Radius: goal={self.region.workspace_radius}m '
             f'path={self.region.path_radius}m')
@@ -91,14 +91,9 @@ class GradientBaseController(Node):
             log.info(
                 f'  - Static workspace center: {self.region.static_workspace_center} '
                 '(overrides MPC goal and marker)')
-        if self.region.ee_frame:
-            log.info(
-                f'  - Arm-in-workspace interlock: {self.region.ee_frame} inside any '
-                f'region sphere (releases {self.region.arm_stop_margin:.2f}m past it) '
-                '-> stop base')
-        else:
-            log.info(
-                '  - Arm-in-workspace interlock: disabled (set ee_frame to enable)')
+        log.info(
+            '  - Convergence interlock: goal sphere touches path-horizon sphere '
+            '-> stop base')
         log.info(
             f'  - Enabled: {self.commander.enabled} '
             f'(toggle via {self.get_name()}/enable)')

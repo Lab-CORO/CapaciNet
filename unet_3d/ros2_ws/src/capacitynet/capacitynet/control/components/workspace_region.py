@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Where to score reachability: the workspace region, resolved from live ROS data.
 
-What Q is scored over: the union of spheres around the MPC goal and the last few
-poses of the MPC predicted path — the approach corridor the arm actually
-traverses. The bare fiducial marker is *not* that target: grasp.py offsets the
+What Q is scored over: the union of spheres around the MPC goal and the point
+of the MPC predicted path the end effector is expected to reach `path_horizon_s`
+seconds from now — the approach corridor the arm actually traverses. The bare
+fiducial marker is *not* that target: grasp.py offsets the
 tag by `approach_distance` (-0.2 m by default) along the marker Z to build the
 pose it plans to, so scoring the tag alone optimises around a point the arm never
 visits. The marker remains the fallback when no MPC goal is available.
@@ -56,10 +57,15 @@ class WorkspaceRegionSource(NodeComponent):
         self.goal_topic = self._declare(
             'goal_topic', '/curobo_trajectory_planner/mpc_goal')
         self.path_topic = self._declare('path_topic', '/mpc_predicted_path')
-        # How many poses from the END of the path join the goal in the union. The
-        # tail is anchored near the goal by the tag geometry, so it stays stable
-        # across replans, unlike the full trajectory. 0 -> goal sphere only.
-        self.path_tail_samples = int(self._declare('path_tail_samples', 4))
+        # Single path center: the predicted end-effector position this many
+        # seconds from now (not from the path's publish stamp), i.e. where the
+        # arm will actually be when it reaches that part of the corridor. Each
+        # pose in the path carries its own header.stamp; we pick the pose whose
+        # stamp is closest to (now + path_horizon_s). If the horizon exceeds
+        # the path's time span, the nearest-stamp search naturally clamps to
+        # the path's last pose. Negative -> path center disabled (goal sphere
+        # only, matching the old path_tail_samples=0 behavior).
+        self.path_horizon_s = float(self._declare('path_horizon_s', 2.0))
         # goal_topic carries a bare Pose with no header; assume this frame
         # (grasp.py always publishes it in the frame it passes to the action).
         self.planning_frame = self._declare('planning_frame', 'dsr01/base_link')
@@ -71,16 +77,6 @@ class WorkspaceRegionSource(NodeComponent):
         # to the same value so unconfigured setups score exactly as before this
         # param existed.
         self.path_radius = float(self._declare('path_radius', 0.05))
-        # TF frame rigidly attached to the arm's TCP/end-effector. Empty (default)
-        # disables the arm-in-workspace interlock entirely — there is no safe
-        # guess for this across arm/gripper configs, and a wrong guess would
-        # silently stop (or fail to stop) the base at the wrong moment. Verify
-        # the real frame name against the live TF tree (`ros2 run tf2_tools
-        # view_frames`) before setting it.
-        self.ee_frame = self._declare('ee_frame', '')
-        # Hysteresis band added to workspace_radius before the interlock releases,
-        # so a TCP sitting on the boundary doesn't chatter the base on and off.
-        self.arm_stop_margin = float(self._declare('arm_stop_margin', 0.05))
         # Fallback region center, expressed in the voxel grid frame. Needed for bag
         # replay: no recorded bag contains /fiducial_markers. Kept as a string
         # ("x,y,z" or "[x, y, z]") so it passes identically through a launch
@@ -93,10 +89,12 @@ class WorkspaceRegionSource(NodeComponent):
         self._marker_pose = None
         self._marker_stamp = None
 
-        # Latest MPC goal (planning_frame) and predicted-path tail (own frame).
+        # Latest MPC goal (planning_frame) and predicted path (own frame): a
+        # list of (stamp_seconds, (x, y, z)) samples, sorted by stamp, used to
+        # look up the pose at path_horizon_s.
         self._mpc_goal = None
         self._mpc_goal_stamp = None
-        self._path_tail = None
+        self._path_samples = None
         self._path_frame = None
         self._path_stamp = None
 
@@ -110,12 +108,13 @@ class WorkspaceRegionSource(NodeComponent):
         # _radii_for.
         self._region_has_goal = True
 
-        # Last resolved region, cached so arm_inside_workspace() can be polled by
-        # BaseCommander's own timer (10 Hz) without waiting on the next inference
-        # cycle (~2 Hz) that resolve() is normally driven by.
-        self._last_centers = None
+        # Frame of the last resolved region, so region_spheres_touching() can
+        # be polled by BaseCommander's own timer (10 Hz) without waiting on
+        # the next inference cycle (~2 Hz) that resolve() is normally driven
+        # by. Only the frame *name* is cached — region_spheres_touching()
+        # re-resolves the centers fresh on every call (see its docstring).
         self._last_frame = None
-        self._arm_inside = False
+        self._spheres_touching = False
 
         # Called when a region that *was* available goes stale. A controlling node
         # wires this to its stop command; a probe leaves it unset.
@@ -143,7 +142,7 @@ class WorkspaceRegionSource(NodeComponent):
             self.goal_sub = node.create_subscription(
                 Pose, self.goal_topic, self.on_mpc_goal, 1,
                 callback_group=self.callback_group)
-        if self.path_topic and self.path_tail_samples > 0:
+        if self.path_topic and self.path_horizon_s >= 0.0:
             path_qos = QoSProfile(
                 reliability=QoSReliabilityPolicy.RELIABLE,
                 history=QoSHistoryPolicy.KEEP_LAST,
@@ -198,8 +197,8 @@ class WorkspaceRegionSource(NodeComponent):
     def region_has_goal(self):
         """Whether the last resolved region's index 0 is a true mpc_goal center.
 
-        False when the region was built from the path tail alone (no fresh
-        mpc_goal) — callers that assign workspace_radius to index 0 (see
+        False when the region was built from the path-horizon point alone (no
+        fresh mpc_goal) — callers that assign workspace_radius to index 0 (see
         _radii_for, and GradientBasedController's own copy of that logic)
         need this to avoid treating a path point as the goal.
         """
@@ -209,61 +208,73 @@ class WorkspaceRegionSource(NodeComponent):
         """Workspace region in `target_frame` as a list of centers, or None.
 
         Priority: the explicit static override, then the MPC goal together with
-        the tail of the predicted path, then the fiducial marker. Q is the mean
-        over the *union* of the spheres, so several centers describe the approach
-        corridor rather than a single point.
+        the path-horizon point of the predicted path, then the fiducial marker.
+        Q is the mean over the *union* of the spheres, so both centers together
+        describe the approach corridor rather than a single point.
 
         Also publishes the debug spheres and the region source, so a probe node
         writes no visualization code of its own.
         """
         centers = self._resolve_centers(target_frame)
         if centers is not None:
-            self._last_centers = centers
             self._last_frame = target_frame
             self._publish_debug(centers, target_frame)
         return centers
 
-    def arm_inside_workspace(self):
-        """Whether the arm's TCP (`ee_frame`) is currently inside the scored region.
+    def region_spheres_touching(self):
+        """Whether the goal sphere and the path-horizon sphere touch or overlap.
 
         Consulted by BaseCommander as a motion interlock, separate from the
-        gradient-based convergence deadband: this stops the base the moment the
-        arm has *physically* reached the workspace, regardless of what the
-        gradient still says, on the theory that positioning is done once the arm
-        can work there.
+        gradient-based convergence deadband. The arm's own *measured* TCP
+        position was tried here first and rejected: it lags the MPC's plan by
+        the controller's live tracking error, so it doesn't reflect "the plan
+        is about to finish". The path-horizon point (the predicted pose
+        `path_horizon_s` seconds out — see WorkspaceRegionSource's module
+        docstring) converges onto the goal as the plan nears completion
+        instead, so contact between the two spheres is read as that signal.
 
-        Checked against each sphere at its own radius — workspace_radius for the
-        goal (center 0), path_radius for the path tail — so a TCP entering
-        either the goal sphere or the corridor counts as inside. Hysteresis: the
-        interlock engages the instant any sphere is entered and only releases
-        once the TCP clears every sphere by `arm_stop_margin`, so a TCP sitting
-        on a boundary doesn't chatter the base on and off.
+        Only meaningful with exactly a goal and a path point (2 centers).
+        Re-resolves the region fresh on every call (via `_resolve_centers`)
+        instead of reusing `resolve()`'s cache, since this is polled at 10 Hz
+        by BaseCommander's watchdog while `resolve()`'s own cache only
+        refreshes once per ~1 Hz inference cycle.
 
         Returns:
-            bool: always False when `ee_frame` is unset (feature disabled) or no
-                region has been resolved yet. On a TF lookup failure, holds the
-                last known state rather than guessing.
+            bool: False if the region has never been resolved yet (no
+                `target_frame` known — otherwise gate() would never let the
+                first resolve() cycle run at all). True (stop, by precaution)
+                if fewer than 2 centers are currently available — no goal, or
+                no fresh path point. Otherwise True iff the sphere surfaces
+                touch or overlap (center distance <= sum of radii).
         """
-        if not self.ee_frame or self._last_centers is None:
+        if self._last_frame is None:
             return False
 
-        try:
-            tf = self.tf_buffer.lookup_transform(
-                self._last_frame, self.ee_frame, rclpy.time.Time())
-        except (tf2_ros.LookupException, tf2_ros.ExtrapolationException,
-                tf2_ros.ConnectivityException) as ex:
-            self.log.warn(
-                f'TF {self.ee_frame} -> {self._last_frame} unavailable: {ex}',
-                throttle_duration_sec=5.0)
-            return self._arm_inside
+        centers = self._resolve_centers(self._last_frame)
+        if centers is None or len(centers) < 2:
+            touching = True
+        else:
+            radii = self._radii_for(centers)
+            distance = math.dist(centers[0], centers[1])
+            touching = distance <= (radii[0] + radii[1])
 
-        p = tf.transform.translation
-        pt = (p.x, p.y, p.z)
-        radii = self._radii_for(self._last_centers)
-        min_margin = min(math.dist(pt, c) - r for c, r in zip(self._last_centers, radii))
-        enter_threshold = self.arm_stop_margin if self._arm_inside else 0.0
-        self._arm_inside = min_margin <= enter_threshold
-        return self._arm_inside
+        if touching != self._spheres_touching:
+            self.log.info(
+                f'{"Contact" if touching else "Separation"}: goal/path-horizon '
+                f'spheres {"touching" if touching else "separated"}'
+                + ('' if centers is None or len(centers) < 2 else
+                   f' (center distance={distance:.3f}m, '
+                   f'sum of radii={radii[0] + radii[1]:.3f}m)'))
+            self._spheres_touching = touching
+        # info, not debug: a node-wide debug level also floods the log with
+        # rcl/rclpy internals (e.g. "Subscription take succeeded"), so this
+        # throttled trace has to be visible at the default level to be usable.
+        if centers is not None and len(centers) >= 2:
+            self.log.info(
+                f'region_spheres_touching: distance={distance:.3f}m, '
+                f'sum_radii={radii[0] + radii[1]:.3f}m, touching={touching}',
+                throttle_duration_sec=1.0)
+        return touching
 
     def _radii_for(self, centers):
         """Per-center sphere radii: workspace_radius for the goal (index 0),
@@ -340,12 +351,14 @@ class WorkspaceRegionSource(NodeComponent):
         self._mpc_goal_stamp = self.node.get_clock().now()
 
     def on_path(self, msg: Path):
-        """Store the tail of the predicted path, in the path's own frame."""
+        """Store the predicted path's timestamped poses, in the path's own frame."""
         if not msg.poses:
             return
-        tail = msg.poses[-self.path_tail_samples:]
-        self._path_tail = [(p.pose.position.x, p.pose.position.y, p.pose.position.z)
-                           for p in tail]
+        self._path_samples = [
+            (rclpy.time.Time.from_msg(p.header.stamp).nanoseconds / 1e9,
+             (p.pose.position.x, p.pose.position.y, p.pose.position.z))
+            for p in msg.poses
+        ]
         self._path_frame = msg.header.frame_id or self.planning_frame
         self._path_stamp = self.node.get_clock().now()
 
@@ -367,7 +380,7 @@ class WorkspaceRegionSource(NodeComponent):
             self._note_source('static')
             return [self.static_workspace_center]
 
-        path_centers = self._path_tail_centers(target_frame)
+        path_centers = self._path_horizon_centers(target_frame)
 
         goal_centers = self._goal_center(target_frame)
         if goal_centers:
@@ -409,18 +422,20 @@ class WorkspaceRegionSource(NodeComponent):
         return self._transform_positions(
             [self._mpc_goal], self.planning_frame, target_frame)
 
-    def _path_tail_centers(self, target_frame):
-        """Path-tail spheres, in target_frame. [] when absent/stale.
+    def _path_horizon_centers(self, target_frame):
+        """Single path-horizon sphere, in target_frame. [] when absent/stale.
 
         Independent of mpc_goal freshness: this is a standalone anchor check
         so the path can join whichever anchor (goal or marker) is actually
         available — see _resolve_centers.
         """
-        path_fresh = bool(self._path_tail) and self._age_s(self._path_stamp) <= self.mpc_timeout
-        if not path_fresh:
+        path_fresh = bool(self._path_samples) and self._age_s(self._path_stamp) <= self.mpc_timeout
+        if not path_fresh or self.path_horizon_s < 0.0:
             return []
+        target_time = self.node.get_clock().now().nanoseconds / 1e9 + self.path_horizon_s
+        _, position = min(self._path_samples, key=lambda s: abs(s[0] - target_time))
         return self._transform_positions(
-            self._path_tail, self._path_frame, target_frame)
+            [position], self._path_frame, target_frame)
 
     def _marker_region(self, target_frame):
         """Single sphere on the fiducial marker. [] when unavailable."""

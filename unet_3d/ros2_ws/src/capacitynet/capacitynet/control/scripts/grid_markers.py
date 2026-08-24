@@ -135,7 +135,7 @@ def build_region_markers(frame_id, stamp, centers, radius, n_stale=0,
         m.pose.orientation.w = 1.0
         m.scale.x = m.scale.y = m.scale.z = 2.0 * r
         m.color.r, m.color.g, m.color.b = (0.1, 0.9, 0.4) if i == 0 else (0.9, 0.6, 0.1)
-        m.color.a = 0.12 if i == 0 else 0.07
+        m.color.a = 1.0# 0.12 if i == 0 else 0.07
         array.markers.append(m)
 
     # Drop spheres left over from a larger previous region.

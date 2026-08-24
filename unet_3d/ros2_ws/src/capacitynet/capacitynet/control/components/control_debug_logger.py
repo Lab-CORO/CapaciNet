@@ -12,8 +12,8 @@ interval between calls to `log_cycle`: no per-stage breakdown (preprocess vs.
 predict vs. gradient) is available past ReachabilityPipeline's own boundary.
 
 `q_center` is the mean reachability over the *union* of every region sphere.
-The `ws_mean_0`..`ws_mean_{N-1}` columns (N = 1 + path_tail_samples, fixed at
-construction so the CSV schema does not depend on which region source is
+The `ws_mean_0`..`ws_mean_{N-1}` columns (N = 1 goal + 1 path-horizon point,
+fixed at construction so the CSV schema does not depend on which region source is
 active this cycle) break that union back down into one mean per sphere,
 computed independently — so an approach where the goal is reachable but the
 path corridor is not (or vice versa) is visible even though it would average
@@ -73,7 +73,7 @@ _FIELDS = [
     'region_source', 'region_size', 'mask_shift_exact',
     'vx_cmd', 'vy_cmd', 'v_cap',
     'enabled', 'converged', 'grasper_state',
-    'grasper_allows_motion', 'arm_inside_workspace', 'allows_motion',
+    'grasper_allows_motion', 'region_converged', 'allows_motion',
     'skip_reason',
 ]
 
@@ -109,11 +109,11 @@ class ControlDebugLogger(NodeComponent):
         self._last_region_source = None
 
         # Upper bound on how many region spheres a cycle can ever report: the
-        # goal (if any) plus the full path tail. Fixed at construction time
-        # from the same param WorkspaceRegionSource uses, so the CSV schema
-        # is stable even though a given cycle's actual region_size varies
-        # (marker/static/path_only = 1, mpc_goal+path = up to this).
-        self._max_region_size = 1 + self.pipeline.region.path_tail_samples
+        # goal (if any) plus the single path-horizon point. Fixed at
+        # construction time so the CSV schema is stable even though a given
+        # cycle's actual region_size varies (marker/static/path_only = 1,
+        # mpc_goal+path = up to this).
+        self._max_region_size = 1 + (1 if self.pipeline.region.path_horizon_s >= 0.0 else 0)
         self._fields = _FIELDS + [f'ws_mean_{i}' for i in range(self._max_region_size)]
 
         if self.csv_path:
@@ -203,7 +203,7 @@ class ControlDebugLogger(NodeComponent):
             'converged': commander.converged,
             'grasper_state': commander.grasper_state or '',
             'grasper_allows_motion': commander.grasper_allows_motion,
-            'arm_inside_workspace': commander.arm_inside_workspace(),
+            'region_converged': commander.region_converged(),
             'allows_motion': commander.allows_motion(),
         }
         # One column per region sphere, in the same order as result.centers

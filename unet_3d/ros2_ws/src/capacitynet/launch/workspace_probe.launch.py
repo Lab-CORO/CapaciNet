@@ -18,9 +18,9 @@ ARGUMENTS = [
     ('goal_topic', '/curobo_trajectory_planner/mpc_goal',
      'geometry_msgs/Pose grasp target published by grasp.py; primary region center'),
     ('path_topic', '/mpc_predicted_path',
-     'nav_msgs/Path whose tail is unioned with the goal sphere'),
-    ('path_tail_samples', '4',
-     'Number of path poses (from the end) added to the scored region; 0 = goal only'),
+     'nav_msgs/Path whose horizon point is unioned with the goal sphere'),
+    ('path_horizon_s', '2.0',
+     'Seconds from now to look up in the path (nearest header.stamp); negative = goal only'),
     ('planning_frame', 'dsr01/base_link',
      'Frame assumed for goal_topic, which carries no header'),
     ('target_marker_id', '-1',
@@ -30,9 +30,9 @@ ARGUMENTS = [
     ('fp16', 'false',
      'Run the PyTorch fallback in half precision (ignored when a TRT engine loads)'),
 
-    ('workspace_radius', '0.30',
+    ('workspace_radius', '0.10',
      'Goal sphere radius in meters (region center 0)'),
-    ('path_radius', '0.30',
+    ('path_radius', '0.10',
      'Path-tail sphere radius in meters (region centers 1+). Defaults to the '
      'same value as workspace_radius'),
     ('grid_spacing', '0.10',
@@ -68,12 +68,21 @@ ARGUMENTS = [
      'gradient arrow'),
 ]
 
+# grasp.py's own params, passed through to the grasp node started alongside
+# the probe so it actually drives mpc_goal/mpc_predicted_path.
+GRASP_ARGUMENTS = [
+    ('grasp_distance', '-0.15',
+     'grasp.py: distance (m) along the marker Z at the final grasp pose'),
+    ('approach_distance', '-0.23',
+     'grasp.py: distance (m) along the marker Z at the pregrasp pose'),
+]
+
 # Topic remappings, not node parameters: WorkspaceRegionSource's TransformListener
-# subscribes to the plain 'tf'/'tf_static' topics, which some robots publish under
-# a namespace (e.g. /leeloo/tf) instead of the default /tf, /tf_static.
+# subscribes to the plain 'tf'/'tf_static' topics. This robot (leeloo) publishes
+# its TF tree under the /leeloo namespace rather than the default /tf, /tf_static.
 TF_REMAP_ARGUMENTS = [
-    ('tf_topic', '/tf', 'Topic carrying tf2_msgs/TFMessage for dynamic transforms'),
-    ('tf_static_topic', '/tf_static', 'Topic carrying tf2_msgs/TFMessage for static transforms'),
+    ('tf_topic', '/leeloo/tf', 'Topic carrying tf2_msgs/TFMessage for dynamic transforms'),
+    ('tf_static_topic', '/leeloo/tf_static', 'Topic carrying tf2_msgs/TFMessage for static transforms'),
 ]
 
 
@@ -82,10 +91,16 @@ def generate_launch_description():
 
     declared = [
         DeclareLaunchArgument(name, default_value=default, description=description)
-        for name, default, description in ARGUMENTS + TF_REMAP_ARGUMENTS
+        for name, default, description in ARGUMENTS + GRASP_ARGUMENTS + TF_REMAP_ARGUMENTS
     ]
 
     parameters = {name: LaunchConfiguration(name) for name, _, _ in ARGUMENTS}
+    grasp_parameters = {name: LaunchConfiguration(name) for name, _, _ in GRASP_ARGUMENTS}
+
+    tf_remappings = [
+        ('tf', LaunchConfiguration('tf_topic')),
+        ('tf_static', LaunchConfiguration('tf_static_topic')),
+    ]
 
     workspace_probe_node = Node(
         package='capacitynet',
@@ -93,10 +108,18 @@ def generate_launch_description():
         name='workspace_probe',
         output='screen',
         parameters=[parameters],
-        remappings=[
-            ('tf', LaunchConfiguration('tf_topic')),
-            ('tf_static', LaunchConfiguration('tf_static_topic')),
-        ],
+        remappings=tf_remappings,
     )
 
-    return LaunchDescription(declared + [workspace_probe_node])
+    # Drives mpc_goal/mpc_predicted_path so the probe has something live to
+    # score, instead of only ever working off a bag or static_workspace_center.
+    grasp_node = Node(
+        package='capacitynet',
+        executable='grasp',
+        name='object_grasper',
+        output='screen',
+        parameters=[grasp_parameters],
+        remappings=tf_remappings,
+    )
+
+    return LaunchDescription(declared + [workspace_probe_node, grasp_node])
